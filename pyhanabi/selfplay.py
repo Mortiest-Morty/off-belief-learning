@@ -249,8 +249,8 @@ if __name__ == "__main__":
         games,
     )
 
-    act_group.start()
-    context.start()
+    act_group.start()  # inference: asking for obs, sending action
+    context.start()  # actor: asking for action, sending obs
     while replay_buffer.size() < args.burn_in_frames:
         print("warming up replay buffer:", replay_buffer.size())
         time.sleep(1)
@@ -278,14 +278,15 @@ if __name__ == "__main__":
             if num_update % args.num_update_between_sync == 0:
                 agent.sync_target_with_online()
             if num_update % args.actor_sync_freq == 0:
-                act_group.update_model(agent)
+                act_group.update_model(agent)  # model: agent -> act_group
 
-            torch.cuda.synchronize()
+            torch.cuda.synchronize()  # sync all training streams
             stopwatch.time("sync and updating")
 
             batch, weight = replay_buffer.sample(args.batchsize, args.train_device)
             stopwatch.time("sample data")
 
+            # rl_loss: [batch]  priority: [batch]  online_q: [seq_len, batch, num_action]
             loss, priority, online_q = agent.loss(batch, args.aux_weight, stat)
             if clone_bot is not None and args.clone_weight > 0:
                 bc_loss = agent.behavior_clone_loss(
@@ -322,6 +323,7 @@ if __name__ == "__main__":
 
         eval_seed = (9917 + epoch * 999999) % 7777777
         eval_agent.load_state_dict(agent.state_dict())
+        # mean_score; perfect_percent; score_list; perfect_num; all_actors
         score, perfect, *_ = evaluate(
             [eval_agent for _ in range(args.num_player)],
             1000,

@@ -21,7 +21,7 @@ python selfplay.py \
        --epoch_len 1000 \
        --num_epoch 2000 \
        --num_player 2 \
-       --net lstm \
+       --net publ-lstm \
        --num_lstm_layer 2 \
        --multi_step 3 \
        --train_device cuda:0 \

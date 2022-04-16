@@ -42,11 +42,13 @@ class TopkSaver:
             if state_dict is not None:
                 torch.save(state_dict, os.path.join(self.save_dir, weight_name))
 
+        # worse than the worst
         if perf <= self.worse_perf:
             # print('i am sorry')
             # [print(i) for i in self.perfs]
             return False
 
+        # cover the worst model and weight
         model_name = "model%i.pthm" % self.worse_perf_idx
         weight_name = "model%i.pthw" % self.worse_perf_idx
         if model is not None:
@@ -58,6 +60,7 @@ class TopkSaver:
             self.perfs.append(perf)
             return True
 
+        # update the new worst model and weight
         # neesd to replace
         self.perfs[self.worse_perf_idx] = perf
         worse_perf = self.perfs[0]

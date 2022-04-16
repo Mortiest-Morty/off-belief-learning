@@ -65,16 +65,16 @@ def evaluate(
                 )
                 actors.append(actor)
                 all_actors.append(actor)
-            thread_actors.append(actors)
-            thread_games.append(games[g_idx])
+            thread_actors.append(actors)  # [num_player] * game_per_thread actors per thread
+            thread_games.append(games[g_idx])  # game_per_thread per thread
         thread = hanalearn.HanabiThreadLoop(thread_games, thread_actors, True)
         threads.append(thread)
         context.push_thread_loop(thread)
 
     for runner in runners:
-        runner.start()
+        runner.start()  # inference
 
-    context.start()
+    context.start()  # actor
     context.join()
 
     for runner in runners:
@@ -82,6 +82,7 @@ def evaluate(
 
     scores = [g.last_episode_score() for g in games]
     num_perfect = np.sum([1 for s in scores if s == 25])
+    # mean_score; perfect_percent; score_list; perfect_num; all_actors
     return np.mean(scores), num_perfect / len(scores), scores, num_perfect, all_actors
 
 

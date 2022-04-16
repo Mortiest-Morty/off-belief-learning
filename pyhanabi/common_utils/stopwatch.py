@@ -27,7 +27,7 @@ def millis_interval(start, end):
 class Stopwatch:
     def __init__(self):
         self.last_time = datetime.now()
-        self.times = defaultdict(list)
+        self.times = defaultdict(list)  # record how much time is used to do sth. e.g. update model
         self.keys = []
 
     def reset(self):
@@ -50,15 +50,15 @@ class Stopwatch:
                 num_elems = len(v)
 
             assert len(v) == num_elems
-            total += np.sum(v)
-            max_key_len = max(max_key_len, len(k))
+            total += np.sum(v)  # total time of all sth.
+            max_key_len = max(max_key_len, len(k))  # literally the max length of all keys
 
         print("@@@Time")
         for k in self.keys:
             v = self.times[k]
             print(
                 "\t%s: %d MS, %.2f%%"
-                % (k.ljust(max_key_len), np.mean(v), 100.0 * np.sum(v) / total)
+                % (k.ljust(max_key_len), np.mean(v), 100.0 * np.sum(v) / total)  # key; mean_time of key; time(key) / time(all(key))
             )
         print("@@@total time per iter: %.2f ms" % (float(total) / num_elems))
         self.reset()

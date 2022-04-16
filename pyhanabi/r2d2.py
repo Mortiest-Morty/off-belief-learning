@@ -311,6 +311,11 @@ class R2D2Agent(torch.jit.ScriptModule):
 
         # this only works because the trajectories are padded,
         # i.e. no terminal in the middle
+        # !in the next few lines, "seq_len" dim means "max_seq_len" in the former context
+        # online_qa: [seq_len, batch]
+        # greedy_a: [seq_len, batch]
+        # online_q: [seq_len, batch, num_action]
+        # lstm_o: [seq_len, batch, dim]
         online_qa, greedy_a, online_q, lstm_o = self.online_net(
             priv_s, publ_s, legal_move, action, hid
         )
@@ -346,13 +351,29 @@ class R2D2Agent(torch.jit.ScriptModule):
             )
             target_qa[-self.multi_step :] = 0
             assert target_qa.size() == reward.size()
+            # This reward is sum discounted reward form t_0 to t_current
             target = reward + bootstrap * (self.gamma ** self.multi_step) * target_qa
-
+        # seq_len: [batch]
         mask = torch.arange(0, max_seq_len, device=seq_len.device)
+        # mask: [seq_len, 1]  seq_len: [1, batch]
         mask = (mask.unsqueeze(1) < seq_len.unsqueeze(0)).float()
+        # e.g. mask [5, 1] seq_len: [1, 3]
+        # mask [[0], [1], [2], [3], [4]]
+        # seq_len [[2, 3, 1]]
+        # mask [[0, 0, 0], [1, 1, 1], [2, 2, 2], [3, 3, 3], [4, 4, 4]]
+        # seq_len [[2, 3, 1], [2, 3, 1], [2, 3, 1], [2, 3, 1], [2, 3, 1]]
+        # mask  [[1, 1, 1], [1, 1, 0], [0, 1, 0], [0, 0, 0], [0, 0, 0]]
+        # This is a process that mask the valid seq_len for each data of the batch.
+        # mask: [seq_len, batch]
+        # online_qa: [seq_len, batch]
+        # target: [seq_len, batch]
         err = (target.detach() - online_qa) * mask
         if self.off_belief and "valid_fict" in obs:
             err = err * obs["valid_fict"]
+        
+        # err: [seq_len, batch]
+        # lstm_o: [seq_len, batch, dim]
+        # online_q: [seq_len, batch, num_action]
         return err, lstm_o, online_q
 
     def aux_task_iql(self, lstm_o, hand, seq_len, rl_loss_size, stat):
@@ -380,12 +401,19 @@ class R2D2Agent(torch.jit.ScriptModule):
         return pred_loss1
 
     def aggregate_priority(self, priority, seq_len):
+        # priority: [seq_len, batch]
+        # p_mean: [batch]
         p_mean = priority.sum(0) / seq_len
+        # .max -> (values, indices)
         p_max = priority.max(0)[0]
+        # agg_priority: [batch]
         agg_priority = self.eta * p_max + (1.0 - self.eta) * p_mean
         return agg_priority
 
     def loss(self, batch, aux_weight, stat):
+        # err: [seq_len, batch]
+        # lstm_o: [seq_len, batch, dim]
+        # online_q: [seq_len, batch, num_action]
         err, lstm_o, online_q = self.td_error(
             batch.obs,
             batch.h0,
@@ -395,17 +423,22 @@ class R2D2Agent(torch.jit.ScriptModule):
             batch.bootstrap,
             batch.seq_len,
         )
+        # smooth_l1_loss: L(err) -> 0
         rl_loss = nn.functional.smooth_l1_loss(
             err, torch.zeros_like(err), reduction="none"
         )
+        # rl_loss: [batch]
         rl_loss = rl_loss.sum(0)
-        stat["rl_loss"].feed((rl_loss / batch.seq_len).mean().item())
+        stat["rl_loss"].feed((rl_loss / batch.seq_len).mean().item())  # rl_loss: double
 
+        # priority: [seq_len, batch]
         priority = err.abs()
+        # priority: [batch]
         priority = self.aggregate_priority(priority, batch.seq_len).detach().cpu()
 
         loss = rl_loss
         if aux_weight <= 0:
+            # rl_loss: [batch]  priority: [batch]  online_q: [seq_len, batch, num_action]
             return loss, priority, online_q
 
         if self.vdn:
