@@ -25,6 +25,7 @@ def millis_interval(start, end):
 
 
 class Stopwatch:
+    """A time recorder for doing some processes"""
     def __init__(self):
         self.last_time = datetime.now()
         self.times = defaultdict(list)  # record how much time is used to do sth. e.g. update model

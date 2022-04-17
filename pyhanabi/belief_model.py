@@ -57,14 +57,14 @@ def pred_loss(logp, gtruth, seq_len):
         one-hot, can be all zero if no card for that position
     """
     assert logp.size() == gtruth.size()
-    logp = (logp * gtruth).sum(3)
+    logp = (logp * gtruth).sum(3)  # - cross entropy
     hand_size = gtruth.sum(3).sum(2).clamp(min=1e-5)
-    logp_per_card = logp.sum(2) / hand_size
-    xent = -logp_per_card.sum(0)
+    logp_per_card = logp.sum(2) / hand_size  # - loss mean by hand
+    xent = -logp_per_card.sum(0)  # loss sum by time
     # print(seq_len.size(), xent.size())
     assert seq_len.size() == xent.size()
-    avg_xent = xent / seq_len
-    nll_per_card = -logp_per_card
+    avg_xent = xent / seq_len  # loss mean by time
+    nll_per_card = -logp_per_card  # loss mean by hand
     return xent, avg_xent, nll_per_card
 
 
@@ -134,41 +134,64 @@ class ARBeliefModel(torch.jit.ScriptModule):
     @torch.jit.script_method
     def forward(self, x, ar_card_in):
         # x = batch.obs[self.input_key]
+        # ar_card_in  = batch.obs[self.ar_input_key]
+        
+        # x: "priv_s"
+        # !ar_card_in: "own_hand_ar_in"
+        # !when t = 0, you have None; t = 1, you have true own hand label for t = 0, and so on
+        
+        # x [seq_len, batch, priv_s]
         x = self.net(x)
         if self.fc_only:
             o = x
         else:
+            # o [seq_len, batch, hid_dim]
             o, (h, c) = self.lstm(x)
 
-        # ar_card_in  = batch.obs[self.ar_input_key]
+        # ar_card_in [seq_len, batch, 5, 25]
         seq, bsize, _ = ar_card_in.size()
+        # ar_card_in [seq_len*batch, 5, 25]
         ar_card_in = ar_card_in.view(seq * bsize, self.hand_size, 25)
 
+        # ar_emb_in [seq_len, batch, 5, hid_dim // 8]
         ar_emb_in = self.emb(ar_card_in)
-        # ar_card_in: [seq * batch, 5, 64]
-        # o: [seq, batch, 512]
+        
+        # o: [seq*batch, hid_dim]
         o = o.view(seq * bsize, self.hid_dim)
+        # o: [seq*batch, 5, hid_dim]
         o = o.unsqueeze(1).expand(seq * bsize, self.hand_size, self.hid_dim)
+        # ar_in: [seq*batch, 5, hid_dim + hid_dim // 8]
         ar_in = torch.cat([ar_emb_in, o], 2)
+        # ar_out: [seq*batch, 5, hid_dim]
         ar_out, _ = self.auto_regress(ar_in)
 
+        # logit: [seq*batch, 5, out_dim]
         logit = self.fc(ar_out)
+        # logit: [seq, batch, 5, out_dim]
         logit = logit.view(seq, bsize, self.hand_size, -1)
         return logit
 
     def loss(self, batch, beta=1):
+        # logit: [seq, batch, 5, out_dim]
         logit = self.forward(batch.obs[self.input_key], batch.obs[self.ar_input_key])
         logit = logit * beta
-        logp = nn.functional.log_softmax(logit, 3)
-        gtruth = batch.obs[self.ar_target_key]
+        logp = nn.functional.log_softmax(logit, 3)  # softmax
+        gtruth = batch.obs[self.ar_target_key]  # truthful own hand label
+        # gtruth: [seq, batch, 5, out_dim]
         gtruth = gtruth.view(logp.size())
+        # seq_len: [batch]
         seq_len = batch.seq_len
+        # xent: [batch]
+        # avg_xent: [batch]
+        # nll_per_card: [seq_len, batch]
         xent, avg_xent, nll_per_card = pred_loss(logp, gtruth, seq_len)
 
         # v0: [seq, batch, hand_size, bit_per_card]
+        # !priv_ar_v0: a belief of uniform distribution for the remains(unobserved cards)
         v0 = batch.obs["priv_ar_v0"]
         v0 = v0.view(v0.size(0), v0.size(1), self.hand_size, 35)[:, :, :, :25]
         logv0 = v0.clamp(min=1e-6).log()
+        # avg_xent_v0: [batch] avg_CE
         _, avg_xent_v0, _ = pred_loss(logv0, gtruth, seq_len)
         return xent, avg_xent, avg_xent_v0, nll_per_card
 

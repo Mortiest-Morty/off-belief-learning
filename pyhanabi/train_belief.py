@@ -184,7 +184,7 @@ def create_sl_context(args):
     if args.burn_in_frames < 0:
         args.burn_in_frames = len(games) * args.num_player
 
-    # priority not used
+    # !priority not used
     priority_exponent = 1.0
     priority_weight = 0.0
     replay_buffer = rela.RNNPrioritizedReplay(
@@ -240,8 +240,8 @@ if __name__ == "__main__":
             context,
             threads,
         ) = create_rl_context(args)
-        act_group.start()
-        context.start()
+        act_group.start()  # inference
+        context.start()  # actor
     else:
         data_gen, replay_buffer = create_sl_context(args)
         data_gen.start_data_generation(args.inf_data_loop, args.seed)
@@ -269,7 +269,7 @@ if __name__ == "__main__":
     else:
         model = belief_model.ARBeliefModel(
             args.train_device,
-            games[0].feature_size(cfgs["sad"])[1],
+            games[0].feature_size(cfgs["sad"])[1],  # priv_dim
             args.hid_dim,
             5,  # hand_size
             25,  # bits per card
@@ -291,7 +291,7 @@ if __name__ == "__main__":
             batch, weight = replay_buffer.sample(args.batchsize, args.train_device)
             assert weight.max() == 1
             loss, xent, xent_v0, _ = model.loss(batch)
-            loss = loss.mean()
+            loss = loss.mean()  # double
             loss.backward()
             g_norm = torch.nn.utils.clip_grad_norm_(model.parameters(), args.grad_clip)
             optim.step()

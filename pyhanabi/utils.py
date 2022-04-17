@@ -244,6 +244,7 @@ def log_explore_ratio(games, expected_eps):
 
 
 class Tachometer:
+    """A training and replay_buffer statistics analysing tool"""
     def __init__(self):
         self.num_buffer = 0
         self.num_train = 0
@@ -284,6 +285,7 @@ def load_weight(model, weight_file, device, *, state_dict=None):
     source_state_dict = OrderedDict()
     target_state_dict = model.state_dict()
 
+    # clean the load dict
     if not set(state_dict.keys()).intersection(set(target_state_dict.keys())):
         new_state_dict = OrderedDict()
         for k in state_dict.keys():
@@ -292,6 +294,7 @@ def load_weight(model, weight_file, device, *, state_dict=None):
                 new_state_dict[new_k] = state_dict[k]
         state_dict = new_state_dict
 
+    # add target dict -> load dict
     for k, v in target_state_dict.items():
         if k not in state_dict:
             print("warning: %s not loaded [not found in file]" % k)
@@ -302,6 +305,8 @@ def load_weight(model, weight_file, device, *, state_dict=None):
                 % (k, v.size(), state_dict[k].size())
             )
             state_dict[k] = v
+    
+    # del load dict redundant
     for k in state_dict:
         if k not in target_state_dict:
             print("removing: %s not used" % k)

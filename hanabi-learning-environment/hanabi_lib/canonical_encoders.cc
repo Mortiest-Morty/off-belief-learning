@@ -883,7 +883,7 @@ std::vector<float> CanonicalObservationEncoder::EncodeARV0Belief(
   int num_players = game.NumPlayers();
   int hand_size = game.HandSize();
 
-  std::vector<std::vector<int>> ar_card_counts;
+  std::vector<std::vector<int>> ar_card_counts; // remain for each hand
   {
     // compute private card count
     std::vector<int> card_count = ComputeCardCount(

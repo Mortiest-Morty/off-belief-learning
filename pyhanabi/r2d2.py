@@ -367,6 +367,8 @@ class R2D2Agent(torch.jit.ScriptModule):
         # mask: [seq_len, batch]
         # online_qa: [seq_len, batch]
         # target: [seq_len, batch]
+        # e.g. if a data seq_len is 5, it only has loss for the first 5 steps, 
+        # and 0 loss for the rest of steps(some number like 75).
         err = (target.detach() - online_qa) * mask
         if self.off_belief and "valid_fict" in obs:
             err = err * obs["valid_fict"]

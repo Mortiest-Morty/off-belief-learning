@@ -17,6 +17,7 @@ from datetime import datetime
 
 
 class ValueStats:
+    """A variable recorder"""
     def __init__(self, name=None):
         self.name = name
         self.reset()
@@ -68,6 +69,7 @@ class ValueStats:
 
 
 class MultiCounter:
+    """A variable statistics analysing tool"""
     def __init__(self, root, verbose=False):
         # TODO: rethink counters
         self.last_time = None

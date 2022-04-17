@@ -269,7 +269,7 @@ class PublicLSTMNet(torch.jit.ScriptModule):
         if isinstance(in_dim, int):
             assert in_dim == 783
             self.in_dim = in_dim
-            self.priv_in_dim = in_dim - 125
+            self.priv_in_dim = in_dim - 125  # priv = public info + player i's private info
             self.publ_in_dim = in_dim - 2 * 125
         else:
             self.in_dim = in_dim
