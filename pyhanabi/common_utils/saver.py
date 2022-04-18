@@ -15,6 +15,9 @@ import torch
 
 
 class TopkSaver:
+    """
+    A Top K models and weights saver.
+    """
     def __init__(self, save_dir, topk):
         self.save_dir = save_dir
         self.topk = topk

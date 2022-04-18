@@ -137,7 +137,16 @@ def flatten_dict(d, new_dict):
 
 def load_agent(weight_file, overwrite):
     """
+    load the inference agent by given weight file and overwrite hyper-parameters.
+    
     overwrite has to contain "device"
+    
+    if the hyper-parameter is not included in the overwrite dict,
+    then find it in the train.log file.
+    
+    Returns:
+        agent: the loaded agent
+        cfg: the train hyper-parameters
     """
     if weight_file == "legacy":
         from legacy_agent import load_legacy_agent
@@ -152,6 +161,7 @@ def load_agent(weight_file, overwrite):
     cfg = get_train_config(weight_file)
     assert cfg is not None
 
+    # decode the nested dict
     if "core" in cfg:
         new_cfg = {}
         flatten_dict(cfg, new_cfg)

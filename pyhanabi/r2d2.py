@@ -379,8 +379,13 @@ class R2D2Agent(torch.jit.ScriptModule):
         return err, lstm_o, online_q
 
     def aux_task_iql(self, lstm_o, hand, seq_len, rl_loss_size, stat):
+        # lstm_o: [seq_len, batch, dim]
+        # hand: [seq_len, batch, 5, 3]
+        # seq_len: [batch]
+        # rl_loss: [batch]
         seq_size, bsize, _ = hand.size()
         own_hand = hand.view(seq_size, bsize, 5, 3)
+        # # own_hand_slot_mask: [seq_len, batch, 5]
         own_hand_slot_mask = own_hand.sum(3)
         pred_loss1, avg_xent1, _, _ = self.online_net.pred_loss_1st(
             lstm_o, own_hand, own_hand_slot_mask, seq_len
@@ -455,10 +460,10 @@ class R2D2Agent(torch.jit.ScriptModule):
             loss = rl_loss + aux_weight * pred1
         else:
             pred = self.aux_task_iql(
-                lstm_o,
-                batch.obs["own_hand"],
-                batch.seq_len,
-                rl_loss.size(),
+                lstm_o,  # lstm_o: [seq_len, batch, dim]
+                batch.obs["own_hand"],  # own_hand: [seq_len, batch, 5, 3]
+                batch.seq_len,  # seq_len: [batch]
+                rl_loss.size(),  # rl_loss: [batch]
                 stat,
             )
             loss = rl_loss + aux_weight * pred

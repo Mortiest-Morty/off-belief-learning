@@ -57,7 +57,7 @@ class SearchWrapper:
             self.rl = None
             self.rl_runner = None
         else:
-            # NOTE: multi-step is hard-coded to 1
+            # !NOTE: multi-step is hard-coded to 1
             self.rl, config = utils.load_agent(
                 weight_file, {"device": train_device, "off_belief": False}
             )
@@ -90,7 +90,7 @@ class SearchWrapper:
         )
         if log_bsize_freq > 0:
             self.bp_runner.set_log_freq(log_bsize_freq)
-        self.bp_runner.start()
+        self.bp_runner.start()  # inference
 
         if belief_file:
             self.belief_model = belief_model.ARBeliefModel.load(
@@ -99,7 +99,7 @@ class SearchWrapper:
                 hand_size=5,
                 num_sample=num_samples,
                 fc_only=False,
-                mode="priv",
+                mode="priv",  # ?
             )
             self.blueprint_belief = belief_model.ARBeliefModel.load(
                 belief_file,
@@ -139,6 +139,7 @@ class SearchWrapper:
         self.actor.set_compute_config(self.num_thread, self.num_game_per_thread)
 
     def update_rl_model(self, model):
+        # agent -> inference
         self.rl_runner.update_model(model)
 
     def reset_rl_to_bp(self):
@@ -163,15 +164,28 @@ def train(game, search_actor, replay_buffer, args, eval_seed):
             return None, None
 
     max_possible_score = game.state().max_possible_score()
+    # SimulationActor: eval mode, evaluate the model as if it will use RL model
     bp_scores = search_actor.actor.run_sim_games(
-        game, args.num_eval_game, 0, eval_seed, sim_hands, use_sim_hands
+        game,  # GameSimulator
+        args.num_eval_game,
+        0,  # numRlStep
+        eval_seed,
+        sim_hands,
+        use_sim_hands
     )
     assert np.mean(bp_scores) <= max_possible_score + 1e-5
     if max_possible_score - np.mean(bp_scores) < args.threshold:
+        # bp_policy has already been so good
         return np.mean(bp_scores), 0
 
+    # SimulationActor: training mode
     search_actor.actor.start_data_generation(
-        game, replay_buffer, args.num_rl_step, sim_hands, use_sim_hands, False
+        game,  # GameSimulator
+        replay_buffer,
+        args.num_rl_step,
+        sim_hands,
+        use_sim_hands,
+        False  # beliefMode
     )
 
     while replay_buffer.size() < args.burn_in_frames:
@@ -240,8 +254,14 @@ def train(game, search_actor, replay_buffer, args, eval_seed):
 
     search_actor.actor.stop_data_generation()
     search_actor.update_rl_model(search_actor.rl)
+    # SimulationActor: eval mode, evaluate the model as if it will use RL model
     rl_scores = search_actor.actor.run_sim_games(
-        game, args.num_eval_game, args.num_rl_step, eval_seed, sim_hands, use_sim_hands
+        game,  # GameSimulator
+        args.num_eval_game,
+        args.num_rl_step,
+        eval_seed,
+        sim_hands,
+        use_sim_hands
     )
 
     rl_mean = np.mean(rl_scores)
@@ -291,6 +311,7 @@ def run(seed, actors, search_actor, args):
                 continue
             if args.maintain_exact_belief:
                 print(f"---Actor {i} update belief---")
+                # update exact belief
                 actor.update_belief(game)
 
         # if already in rl mode, then no more training
@@ -317,6 +338,7 @@ def run(seed, actors, search_actor, args):
 
         for i, actor in enumerate(actors):
             print(f"---Actor {i} observe---")
+            # observeBeforeAct
             actor.observe(game)
 
         if search_actor.belief_runner is not None:
@@ -324,14 +346,17 @@ def run(seed, actors, search_actor, args):
                 if i != search_actor.player_idx:
                     continue
                 print(f"---Actor {i} update belief hid---")
+                # update rnn belief
                 actor.update_belief_hid(game)
 
         actions = []
         for i, actor in enumerate(actors):
             print(f"---Actor {i} decide action---")
+            # action
             action = actor.decide_action(game)
             actions.append(action)
 
+        # move
         move = game.get_move(actions[cur_player])
         if args.sparta and cur_player == search_actor.player_idx:
             move = actor.sparta_search(
@@ -354,14 +379,14 @@ def parse_args():
     parser.add_argument("--debug", type=int, default=0)
     parser.add_argument("--game_seed", type=int, default=1)
     parser.add_argument("--n_step", type=int, default=1, help="n_step return")
-    parser.add_argument("--num_eval_game", type=int, default=5000)
+    parser.add_argument("--num_eval_game", type=int, default=5000)  # !E
     parser.add_argument("--final_only", type=int, default=0)
     parser.add_argument("--sparta", type=int, default=0)
     parser.add_argument("--sparta_num_search", type=int, default=10000)
-    parser.add_argument("--sparta_threshold", type=float, default=0.05)
+    parser.add_argument("--sparta_threshold", type=float, default=0.05)  # !epsilon
 
     parser.add_argument("--seed", type=int, default=10001)
-    parser.add_argument("--num_rl_step", type=int, default=1)
+    parser.add_argument("--num_rl_step", type=int, default=1)  # !H
     parser.add_argument("--gamma", type=float, default=0.999, help="discount factor")
     # optimization/training settings
     parser.add_argument("--lr", type=float, default=6.25e-5, help="Learning rate")
@@ -390,7 +415,7 @@ def parse_args():
     parser.add_argument("--train_device", type=str, default="cuda:0")
     parser.add_argument("--batchsize", type=int, default=128)
     parser.add_argument("--num_epoch", type=int, default=1)
-    parser.add_argument("--epoch_len", type=int, default=5000)
+    parser.add_argument("--epoch_len", type=int, default=5000)  # !G
     parser.add_argument("--num_update_between_sync", type=int, default=2500)
 
     parser.add_argument("--num_hint", type=int, required=True)
@@ -451,13 +476,15 @@ if __name__ == "__main__":
         args.n_step,
         args.gamma,
         args.train_device,
-        args.rl_rollout_device,
+        args.rl_rollout_device,  # *use rl model args.rl_rollout_device
         args.bp_rollout_device,
         args.belief_device,
         args.rollout_batchsize,
         args.num_thread,
         args.num_game_per_thread,
     )
+    
+    # this actor is refered to as RLSearchActor
     search_wrapper0.actor.set_partner(search_wrapper1.actor)
     search_wrapper1.actor.set_partner(search_wrapper0.actor)
 

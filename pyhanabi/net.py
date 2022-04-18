@@ -27,12 +27,21 @@ def duel(v: torch.Tensor, a: torch.Tensor, legal_move: torch.Tensor) -> torch.Te
 
 
 def cross_entropy(net, lstm_o, target_p, hand_slot_mask, seq_len):
-    # target_p: [seq_len, batch, num_player, 5, 3]
-    # hand_slot_mask: [seq_len, batch, num_player, 5]
+    # net: nn.Linear(dim, 5 * 3)
+    # lstm_o: [seq_len, batch, dim]
+    # target_p: [seq_len, batch, (num_player,) 5, 3]
+    # hand_slot_mask: [seq_len, batch, (num_player,) 5]
+    # seq_len: [batch]
+    
+    # logit: [seq_len, batch, 5, 3]
     logit = net(lstm_o).view(target_p.size())
+    # q: [seq_len, batch, 5, 3]
     q = nn.functional.softmax(logit, -1)
     logq = nn.functional.log_softmax(logit, -1)
+    # [seq_len, batch, 5]
     plogq = (target_p * logq).sum(-1)
+    # hand_slot_mask: if the target in none, then there is no loss
+    # [seq_len, batch]
     xent = -(plogq * hand_slot_mask).sum(-1) / hand_slot_mask.sum(-1).clamp(min=1e-6)
 
     if xent.dim() == 3:
@@ -40,10 +49,10 @@ def cross_entropy(net, lstm_o, target_p, hand_slot_mask, seq_len):
         xent = xent.mean(2)
 
     # save before sum out
-    seq_xent = xent
-    xent = xent.sum(0)
+    seq_xent = xent  # [seq_len, batch]
+    xent = xent.sum(0)  # [batch]
     assert xent.size() == seq_len.size()
-    avg_xent = (xent / seq_len).mean().item()
+    avg_xent = (xent / seq_len).mean().item()  # [batch]
     return xent, avg_xent, q, seq_xent.detach()
 
 
