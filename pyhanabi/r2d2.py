@@ -133,8 +133,16 @@ class R2D2Agent(torch.jit.ScriptModule):
         legal_move: torch.Tensor,
         hid: Dict[str, torch.Tensor],
     ) -> Tuple[torch.Tensor, Dict[str, torch.Tensor]]:
+        # priv_s:[batch, dim]
+        # publ_s:[batch, dim]
+        # legal_move:[batch, out_dim]
+        # hid:[batch, num_layer, num_player, dim]
+        
+        # adv:[batch, out_dim] new_hid:{'':[batch, num_layer, num_player, dim],}
         adv, new_hid = self.online_net.act(priv_s, publ_s, hid)
+        # legal_adv:[batch, out_dim]
         legal_adv = (1 + adv - adv.min()) * legal_move
+        # greedy_action:[batch]
         greedy_action = legal_adv.argmax(1).detach()
         return greedy_action, new_hid
 
@@ -164,13 +172,13 @@ class R2D2Agent(torch.jit.ScriptModule):
         output: {'a' : actions}, a long Tensor of shape
             [batchsize] or [batchsize, num_player]
         """
-        priv_s = obs["priv_s"]
-        publ_s = obs["publ_s"]
-        legal_move = obs["legal_move"]
+        priv_s = obs["priv_s"]  # batch, dim
+        publ_s = obs["publ_s"]  # batch, dim
+        legal_move = obs["legal_move"]  # batch, out_dim
         if "eps" in obs:
-            eps = obs["eps"].flatten(0, 1)
+            eps = obs["eps"].flatten(0, 1)  # batch
         else:
-            eps = torch.zeros((priv_s.size(0),), device=priv_s.device)
+            eps = torch.zeros((priv_s.size(0),), device=priv_s.device)  # batch
 
         if self.vdn:
             bsize, num_player = obs["priv_s"].size()[:2]
@@ -180,6 +188,7 @@ class R2D2Agent(torch.jit.ScriptModule):
         else:
             bsize, num_player = obs["priv_s"].size()[0], 1
 
+        #  [batch, num_layer, num_player, dim]
         hid = {"h0": obs["h0"], "c0": obs["c0"]}
 
         if self.boltzmann:
@@ -189,16 +198,21 @@ class R2D2Agent(torch.jit.ScriptModule):
             )
             reply = {"prob": prob}
         else:
+            # greedy_action: [batch]
+            # new_hid:{'':[batch, num_layer, num_player, dim],}
             greedy_action, new_hid = self.greedy_act(priv_s, publ_s, legal_move, hid)
             reply = {}
 
         if self.greedy:
             action = greedy_action
         else:
+            # random_action:[batch] sample by chance(actually uniform dist)
             random_action = legal_move.multinomial(1).squeeze(1)
+            # rand:[batch]
             rand = torch.rand(greedy_action.size(), device=greedy_action.device)
             assert rand.size() == eps.size()
-            rand = (rand < eps).float()
+            rand = (rand < eps).float()  # rate "eps" to explore
+            # action:[batch]
             action = (greedy_action * (1 - rand) + random_action * rand).detach().long()
 
         if self.vdn:
@@ -206,8 +220,11 @@ class R2D2Agent(torch.jit.ScriptModule):
             greedy_action = greedy_action.view(bsize, num_player)
             # rand = rand.view(bsize, num_player)
 
+        # batch
         reply["a"] = action.detach().cpu()
+        # batch, num_layer, num_player, dim
         reply["h0"] = new_hid["h0"].detach().cpu()
+        # batch, num_layer, num_player, dim
         reply["c0"] = new_hid["c0"].detach().cpu()
         return reply
 
@@ -215,15 +232,24 @@ class R2D2Agent(torch.jit.ScriptModule):
     def compute_target(
         self, input_: Dict[str, torch.Tensor]
     ) -> Dict[str, torch.Tensor]:
+        """compute the 1-step TD-target for each sample at each time in the batch
+        # *used for blueprint policy's reward computation as in RLSearch
+        
+        Args:
+            input_ (Dict[str, torch.Tensor]): _description_
+
+        Returns:
+            Dict[str, torch.Tensor]: _description_
+        """
         assert self.multi_step == 1
         priv_s = input_["priv_s"]
         publ_s = input_["publ_s"]
         legal_move = input_["legal_move"]
-        act_hid = {
+        act_hid = {  # hid:[batch, num_layer, num_player, dim]
             "h0": input_["h0"],
             "c0": input_["c0"],
         }
-        fwd_hid = {
+        fwd_hid = {  # hid:[num_layer, batch*num_player, dim]
             "h0": input_["h0"].transpose(0, 1).flatten(1, 2).contiguous(),
             "c0": input_["c0"].transpose(0, 1).flatten(1, 2).contiguous(),
         }
@@ -238,10 +264,13 @@ class R2D2Agent(torch.jit.ScriptModule):
             next_q = self.target_net(priv_s, publ_s, legal_move, next_a, fwd_hid)[2]
             qa = (next_q * next_pa).sum(1)
         else:
+            # next_a [seq_len, batch]
             next_a = self.greedy_act(priv_s, publ_s, legal_move, act_hid)[0]
+            # qa: [seq_len, batch]
             qa = self.target_net(priv_s, publ_s, legal_move, next_a, fwd_hid)[0]
 
         assert reward.size() == qa.size()
+        # 1-step TD-target: [seq_len, batch]
         target = reward + (1 - terminal) * self.gamma * qa
         return {"target": target.detach()}
 
@@ -249,10 +278,20 @@ class R2D2Agent(torch.jit.ScriptModule):
     def compute_priority(
         self, input_: Dict[str, torch.Tensor]
     ) -> Dict[str, torch.Tensor]:
+        """compute the priority for each sample in the batch
+        # *used for new samples' priority as in replay_buffer
+
+        Args:
+            input_ (Dict[str, torch.Tensor]): _description_
+
+        Returns:
+            Dict[str, torch.Tensor]: _description_
+        """
         if self.uniform_priority:
-            return {"priority": torch.ones_like(input_["reward"].sum(1))}
+            return {"priority": torch.ones_like(input_["reward"].sum(1))}  # batch
 
         # swap batch_dim and seq_dim
+        # [batch, seq_len] -> [seq_len, batch]
         for k, v in input_.items():
             if k != "seq_len":
                 input_[k] = v.transpose(0, 1).contiguous()
@@ -274,6 +313,7 @@ class R2D2Agent(torch.jit.ScriptModule):
         terminal = input_["terminal"]
         bootstrap = input_["bootstrap"]
         seq_len = input_["seq_len"]
+        # err: [seq_len, batch]
         err, _, _ = self.td_error(
             obs, hid, action, reward, terminal, bootstrap, seq_len
         )
@@ -298,6 +338,8 @@ class R2D2Agent(torch.jit.ScriptModule):
         legal_move = obs["legal_move"]
         action = action["a"]
 
+        # hid size: [num_layer, batch, num_player, dim]
+        # -> [num_layer, batch*num_player, dim]
         for k, v in hid.items():
             hid[k] = v.flatten(1, 2).contiguous()
 

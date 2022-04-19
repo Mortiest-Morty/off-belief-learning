@@ -197,11 +197,25 @@ class ARBeliefModel(torch.jit.ScriptModule):
 
     @torch.jit.script_method
     def observe(self, obs: Dict[str, torch.Tensor]) -> Dict[str, torch.Tensor]:
+        """at some time-step, update the hidden layers (h0,c0) to
+        the next time-step (h0',c0') by a player's priv_s
+        # ?
+
+        Args:
+            obs (Dict[str, torch.Tensor]): _description_
+
+        Returns:
+            Dict[str, torch.Tensor]: _description_
+        """
         bsize, num_lstm_layer, num_player, dim = obs["h0"].size()
+        
+        # num_lstm_layer, bsize*num_player, dim
         h0 = obs["h0"].transpose(0, 1).flatten(1, 2).contiguous()
         c0 = obs["c0"].transpose(0, 1).flatten(1, 2).contiguous()
 
+        # s"priv_s" [1, batch, priv_s]
         s = obs[self.input_key].unsqueeze(0)
+        # x [1, batch, dim]
         x = self.net(s)
         if self.fc_only:
             o, (h, c) = x, (h0, c0)
@@ -217,10 +231,22 @@ class ARBeliefModel(torch.jit.ScriptModule):
 
     @torch.jit.script_method
     def sample(self, obs: Dict[str, torch.Tensor]) -> Dict[str, torch.Tensor]:
+        """at some time-step, for each unknown own card, sample self.num_sample times one by one, 
+        and update the hidden layers (h0,c0) to the next time-step (h0',c0') by a player's priv_s
+
+        Args:
+            obs (Dict[str, torch.Tensor]): _description_
+
+        Returns:
+            Dict[str, torch.Tensor]: _description_
+        """
         bsize, num_lstm_layer, num_player, dim = obs["h0"].size()
+        
+        # num_lstm_layer, bsize*num_player, dim
         h0 = obs["h0"].transpose(0, 1).flatten(1, 2).contiguous()
         c0 = obs["c0"].transpose(0, 1).flatten(1, 2).contiguous()
 
+        # s"priv_s" [1, batch, priv_s]
         s = obs[self.input_key].unsqueeze(0)
         x = self.net(s)
         if self.fc_only:
@@ -233,29 +259,46 @@ class ARBeliefModel(torch.jit.ScriptModule):
         assert seq == 1, "seqlen should be 1"
         # assert bsize == 1, "batchsize for BeliefModel.sample should be 1"
         o = o.view(bsize, hid_dim)
+        # o: [batch, 50000, dim]
         o = o.unsqueeze(1).expand(bsize, self.num_sample, hid_dim)
 
+        # in_t: [batch, 50000, dim//8]
         in_t = torch.zeros(bsize, self.num_sample, hid_dim // 8, device=o.device)
         shape = (1, bsize * self.num_sample, self.hid_dim)
+        
+        # ar_hid: [1, batch * 50000, dim]
         ar_hid = (
             torch.zeros(*shape, device=o.device),
             torch.zeros(*shape, device=o.device),
         )
         sample_list = []
         for i in range(self.hand_size):
+            # ar_in: [batch*50000, 1, dim + dim//8]
             ar_in = torch.cat([in_t, o], 2).view(bsize * self.num_sample, 1, -1)
+            # ar_out: [batch*50000, 1, dim]
+            # ar_hid: [1, batch * 50000, dim]
             ar_out, ar_hid = self.auto_regress(ar_in, ar_hid)
+            # logit: [batch*50000, out_dim]
             logit = self.fc(ar_out.squeeze(1))
+            # prob: [batch*50000, out_dim]
             prob = nn.functional.softmax(logit, 1)
+            # sample_t: [batch*50000] card index
             sample_t = prob.multinomial(1)
+            # sample_t: [batch, 50000]
             sample_t = sample_t.view(bsize, self.num_sample)
+            # onehot_sample_t: [batch, 50000, 25]
             onehot_sample_t = torch.zeros(
                 bsize, self.num_sample, 25, device=sample_t.device
             )
+            # onehot_sample_t: [batch, 50000, 25]
             onehot_sample_t.scatter_(2, sample_t.unsqueeze(2), 1)
+            # in_t: [batch, 50000, dim//8] the sampled hands' embedding, used for a next sample
             in_t = self.emb(onehot_sample_t)
+            
+            # sample_t: [batch, 50000]
             sample_list.append(sample_t)
 
+        # sample: [batch, 50000, 5]
         sample = torch.stack(sample_list, 2)
 
         h = h.view(num_lstm_layer, bsize, num_player, dim)

@@ -331,6 +331,10 @@ class PublicLSTMNet(torch.jit.ScriptModule):
         publ_s: torch.Tensor,
         hid: Dict[str, torch.Tensor],
     ) -> Tuple[torch.Tensor, Dict[str, torch.Tensor]]:
+        # priv_s:[batch, dim]
+        # publ_s:[batch, dim]
+        # hid:[batch, num_layer, num_player, dim]
+        
         assert priv_s.dim() == 2
 
         bsize = hid["h0"].size(0)
@@ -342,17 +346,25 @@ class PublicLSTMNet(torch.jit.ScriptModule):
             "c0": hid["c0"].transpose(0, 1).flatten(1, 2).contiguous(),
         }
 
+        # priv_s:[1, batch, dim] : add the seq_len dim
         priv_s = priv_s.unsqueeze(0)
+        # publ_s:[1, batch, dim]
         publ_s = publ_s.unsqueeze(0)
 
+        # x:[1, batch, hid_dim]
         x = self.publ_net(publ_s)
+        # publ_o:[1, batch, hid_dim]
         publ_o, (h, c) = self.lstm(x, (hid["h0"], hid["c0"]))
 
+        # priv_o:[1, batch, hid_dim]
         priv_o = self.priv_net(priv_s)
+        # o:[1, batch, hid_dim]
         o = priv_o * publ_o
         a = self.fc_a(o)
+        # a:[batch, out_dim]
         a = a.squeeze(0)
 
+        # turn it back
         # hid size: [num_layer, batch x num_player, dim]
         # -> [batch, num_layer, num_player, dim]
         interim_hid_shape = (
@@ -391,8 +403,14 @@ class PublicLSTMNet(torch.jit.ScriptModule):
         if len(hid) == 0:
             publ_o, _ = self.lstm(x)
         else:
+            # x: [seq_len, batch, dim]
+            # hid: [num_layer, batch*num_player, dim]
+            
+            # publ_o: [seq_len, batch, dim]
             publ_o, _ = self.lstm(x, (hid["h0"], hid["c0"]))
+        # priv_o: [seq_len, batch, dim]
         priv_o = self.priv_net(priv_s)
+        # o: [seq_len, batch, dim]
         o = priv_o * publ_o
         a = self.fc_a(o)
         v = self.fc_v(o)
@@ -400,6 +418,8 @@ class PublicLSTMNet(torch.jit.ScriptModule):
 
         # q: [seq_len, batch, num_action]
         # action: [seq_len, batch]
+        
+        # qa: [seq_len, batch]
         qa = q.gather(2, action.unsqueeze(2)).squeeze(2)
 
         assert q.size() == legal_move.size()
