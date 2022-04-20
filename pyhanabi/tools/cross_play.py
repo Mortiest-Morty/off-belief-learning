@@ -53,6 +53,7 @@ def filter_exclude(entries, excludes):
 
 
 def cross_play(models, num_player, num_game, seed):
+    # Allow the same element to be selected multiple times
     combs = list(itertools.combinations_with_replacement(models, num_player))
     perfs = defaultdict(list)
     for comb in combs:
@@ -63,6 +64,8 @@ def cross_play(models, num_player, num_game, seed):
     for num_model, scores in perfs.items():
         print(
             f"#model: {num_model}, #groups {len(scores)}, "
+            # when there are 2 players, and num_model=2, groups = C^2_{len(models)}, 
+            # which is not the case for more players
             f"score: {np.mean(scores):.2f} "
             f"+/- {np.std(scores) / np.sqrt(len(scores) - 1):.2f}"
         )

@@ -107,12 +107,12 @@ def evaluate_saved_model(
 
     for weight_file in weight_files:
         state_dict = torch.load(weight_file)
-        if "fc_v.weight" in state_dict.keys():
+        if "fc_v.weight" in state_dict.keys():  # rl agent
             agent, cfg = utils.load_agent(weight_file, overwrite)
             agents.append(agent)
             sad.append(cfg["sad"] if "sad" in cfg else cfg["greedy_extra"])
             hide_action.append(bool(cfg["hide_action"]))
-        else:
+        else:  # sl agent
             agent = utils.load_supervised_agent(weight_file, "cuda:0")
             agents.append(agent)
             sad.append(False)
@@ -122,6 +122,7 @@ def evaluate_saved_model(
     scores = []
     perfect = 0
     for i in range(num_run):
+        # mean_score; perfect_percent; score_list; perfect_num; all_actors
         _, _, score, p, games = evaluate(
             agents,
             num_game,

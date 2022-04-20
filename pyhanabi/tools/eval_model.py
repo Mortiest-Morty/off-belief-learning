@@ -57,6 +57,8 @@ for i, wf in enumerate(weight_files):
     if wf in model_zoo:
         weight_files[i] = model_zoo[wf]
 
+
+# scores: all score list; actors: all actors for games
 _, _, _, scores, actors = evaluate_saved_model(
     weight_files,
     args.num_game,
@@ -66,12 +68,13 @@ _, _, _, scores, actors = evaluate_saved_model(
 )
 non_zero_scores = [s for s in scores if s > 0]
 print(f"non zero mean: {np.mean(non_zero_scores):.3f}")
-print(f"bomb out rate: {100 * (1 - len(non_zero_scores) / len(scores)):.2f}%")
+print(f"bomb out rate: {100 * (1 - len(non_zero_scores) / len(scores)):.2f}%")  # lose rate(score <= 0)
 
 # 4 numbers represent: [none, color, rank, both] respectively
 card_stats = []
 for g in actors:
     card_stats.append(g.get_played_card_info())
+# [num_player*num_games, 4] -> [4]
 card_stats = np.array(card_stats).sum(0)
 
 print("knowledge of cards played:")
