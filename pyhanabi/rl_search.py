@@ -379,14 +379,14 @@ def parse_args():
     parser.add_argument("--debug", type=int, default=0)
     parser.add_argument("--game_seed", type=int, default=1)
     parser.add_argument("--n_step", type=int, default=1, help="n_step return")
-    parser.add_argument("--num_eval_game", type=int, default=5000)  # !E
+    parser.add_argument("--num_eval_game", type=int, default=5000)  # !E:the number of evaluations for comparing fine-tuned policy against blueprint
     parser.add_argument("--final_only", type=int, default=0)
     parser.add_argument("--sparta", type=int, default=0)
     parser.add_argument("--sparta_num_search", type=int, default=10000)
-    parser.add_argument("--sparta_threshold", type=float, default=0.05)  # !epsilon
+    parser.add_argument("--sparta_threshold", type=float, default=0.05)  # !epsilon:the deviation threshold
 
     parser.add_argument("--seed", type=int, default=10001)
-    parser.add_argument("--num_rl_step", type=int, default=1)  # !H
+    parser.add_argument("--num_rl_step", type=int, default=1)  # !H:horizon
     parser.add_argument("--gamma", type=float, default=0.999, help="discount factor")
     # optimization/training settings
     parser.add_argument("--lr", type=float, default=6.25e-5, help="Learning rate")
@@ -405,7 +405,7 @@ def parse_args():
     parser.add_argument("--rl_rollout_device", type=str, default="cuda:1")
     parser.add_argument("--bp_rollout_device", type=str, default="cuda:1")
     parser.add_argument("--actor_sync_freq", type=int, default=10)
-    parser.add_argument("--rollout_batchsize", type=int, default=8000)
+    parser.add_argument("--rollout_batchsize", type=int, default=8000)  # !B:rollout batch size
 
     parser.add_argument("--num_thread", type=int, default=1, help="#thread_loop")
     parser.add_argument("--num_game_per_thread", type=int, default=20)
@@ -415,7 +415,7 @@ def parse_args():
     parser.add_argument("--train_device", type=str, default="cuda:0")
     parser.add_argument("--batchsize", type=int, default=128)
     parser.add_argument("--num_epoch", type=int, default=1)
-    parser.add_argument("--epoch_len", type=int, default=5000)  # !G
+    parser.add_argument("--epoch_len", type=int, default=5000)  # !G:the number of gradient steps
     parser.add_argument("--num_update_between_sync", type=int, default=2500)
 
     parser.add_argument("--num_hint", type=int, required=True)
@@ -423,7 +423,7 @@ def parse_args():
 
     parser.add_argument("--belief_file", type=str, default="")
     parser.add_argument("--belief_device", type=str, default="cuda:0")
-    parser.add_argument("--num_samples", type=int, default=50000)
+    parser.add_argument("--num_samples", type=int, default=50000)  # !M:number of rollouts
     parser.add_argument("--maintain_exact_belief", type=int, default=1)
     parser.add_argument("--search_exact_belief", type=int, default=1)
 

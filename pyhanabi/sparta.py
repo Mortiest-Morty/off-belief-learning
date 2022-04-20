@@ -38,14 +38,17 @@ def run(seed, actors, search_actor_idx, num_search, threshold, num_thread):
 
         cur_player = game.state().cur_player()
 
-        actors[search_actor_idx].update_belief(game, num_thread)
+        actors[search_actor_idx].update_belief(game, num_thread)  # exact belief
         for i, actor in enumerate(actors):
+            # observeBeforeAct
             actor.observe(game)
 
         for i, actor in enumerate(actors):
             print(f"---Actor {i} decide action---")
+            # act
             action = actor.decide_action(game)
             if i == cur_player:
+                # move
                 move = game.get_move(action)
 
         # run sparta, this may change the move
@@ -88,16 +91,16 @@ if __name__ == "__main__":
     logger_path = os.path.join(args.save_dir, "train.log")
     sys.stdout = common_utils.Logger(logger_path)
 
-    if "fc_v.weight" in torch.load(args.weight_file).keys():
+    if "fc_v.weight" in torch.load(args.weight_file).keys():  # rl agent
         bp, config = utils.load_agent(args.weight_file, {"device": args.device})
         assert not config["hide_action"]
         assert not config["boltzmann_act"]
-    else:
+    else:  # sl agent
         bp = utils.load_supervised_agent(args.weight_file, args.device)
     bp.train(False)
 
     bp_runner = rela.BatchRunner(bp, args.device, 2000, ["act"])
-    bp_runner.start()
+    bp_runner.start()  # inference
 
     seed = args.seed
     actors = []
