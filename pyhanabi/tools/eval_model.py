@@ -17,6 +17,7 @@
 import argparse
 import os
 import sys
+import time
 import numpy as np
 
 lib_path = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -57,7 +58,7 @@ for i, wf in enumerate(weight_files):
     if wf in model_zoo:
         weight_files[i] = model_zoo[wf]
 
-
+st = time.time()
 # scores: all score list; actors: all actors for games
 _, _, _, scores, actors = evaluate_saved_model(
     weight_files,
@@ -66,7 +67,11 @@ _, _, _, scores, actors = evaluate_saved_model(
     args.bomb,
     num_run=args.num_run,
 )
+et = time.time()
 non_zero_scores = [s for s in scores if s > 0]
+
+print(f"num of games: {args.num_game:d}")
+print(f"use of time: {(et - st):.3f}s")
 print(f"non zero mean: {np.mean(non_zero_scores):.3f}")
 print(f"bomb out rate: {100 * (1 - len(non_zero_scores) / len(scores)):.2f}%")  # lose rate(score <= 0)
 
