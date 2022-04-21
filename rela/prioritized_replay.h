@@ -232,6 +232,7 @@ class PrioritizedReplay {
   }
 
   std::tuple<DataType, torch::Tensor> sample(int batchsize, const std::string& device) {
+    // std::cout << "call func std::tuple<DataType, torch::Tensor> sample!" << std::endl;
     if (!sampledIds_.empty()) {
       std::cout << "Error: previous samples' priority has not been updated." << std::endl;
       assert(false);
@@ -298,6 +299,8 @@ class PrioritizedReplay {
 
   SampleWeightIds sample_(int batchsize, const std::string& device) {
     std::unique_lock<std::mutex> lk(mSampler_);
+    
+    // std::cout << "call func SampleWeightIds sample_!" << std::endl;
 
     float sum;
     int size = storage_.safeSize(&sum);
@@ -359,7 +362,9 @@ class PrioritizedReplay {
     if (device != "cpu") {
       weights = weights.to(torch::Device(device));
     }
+    // std::cout << "ready to call makeBatch!" << std::endl;
     auto batch = makeBatch(samples, device);
+    // std::cout << "called makeBatch!" << std::endl;
     return std::make_tuple(batch, weights, ids);
   }
 

@@ -55,6 +55,10 @@ class R2D2Buffer {
   void pushAction(const TensorDict& action) {
     assert(callOrder_ == 1);
     ++callOrder_;
+    // for (auto& kv : action) {
+    //   std::cout << kv.first << std::endl;
+    //   std::cout << kv.second.sizes() << std::endl;
+    // }
     action_[seqLen_] = action;
   }
 
@@ -115,6 +119,11 @@ class R2D2Buffer {
     transition.bootstrap = torch::tensor(bootstrap_);
     transition.seqLen = torch::tensor(float(seqLen_));
     transition.h0 = h0_;
+
+    // for (auto& kv : transition.action) {
+    //   std::cout << kv.first << std::endl;
+    //   std::cout << kv.second.sizes() << std::endl;
+    // }
 
     seqLen_ = 0;
     callOrder_ = 0;

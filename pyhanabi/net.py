@@ -486,11 +486,9 @@ class PPOPublicLSTMNet(torch.jit.ScriptModule):
         self.lstm.flatten_parameters()
 
         self.policy = nn.Sequential(
-            nn.Linear(self.hid_dim, self.hid_dim // 4),
+            nn.Linear(self.hid_dim, self.hid_dim // 8),
             nn.ReLU(),
-            nn.Linear(self.hid_dim // 4, self.hid_dim // 4),
-            nn.ReLU(),
-            nn.Linear(self.hid_dim // 4, self.out_dim),
+            nn.Linear(self.hid_dim // 8, self.out_dim),
         )
         
         self.fc = nn.Linear(self.hid_dim, self.hid_dim)
@@ -506,13 +504,12 @@ class PPOPublicLSTMNet(torch.jit.ScriptModule):
         )
         
         self.value = nn.Sequential(
-            nn.Linear(2 * self.hid_dim, self.hid_dim // 4),
+            nn.Linear(2 * self.hid_dim, self.hid_dim // 8),
             nn.ReLU(),
-            nn.Linear(self.hid_dim // 4, self.hid_dim // 4),
-            nn.ReLU(),
-            nn.Linear(self.hid_dim // 4, 1),
+            nn.Linear(self.hid_dim // 8, 1),
         )
         
+        self.fc_v = nn.Linear(self.hid_dim, 1)
         self.fc_a = nn.Linear(self.hid_dim, self.out_dim)
         # for aux task
         self.pred_1st = nn.Linear(self.hid_dim, 5 * 3)
@@ -565,43 +562,36 @@ class PPOPublicLSTMNet(torch.jit.ScriptModule):
         priv_o = self.priv_net(priv_s)
         # o:[1, batch, hid_dim]
         o = priv_o * publ_o
+        o = self.fc(o)
         
-        if self.ppo:
-            o = self.fc(o)
-            
-            # probs: [1, batch, out_dim]
-            probs = self.policy(o)
-            
-            assert probs.size() == legal_move.size()
-            assert legal_move.dim() == 3  # 1, batch, out_dim
-            legal_probs = probs + (legal_move - 1) * 1e10
-            # p: [1, batch, num_action]
-            p = torch.softmax(legal_probs, dim=-1)
-            # greedy_action: [batch]
-            greedy_action = p.argmax(2).squeeze(0).detach()
+        # probs: [1, batch, out_dim]
+        probs = self.policy(o)
+        legal_move = legal_move.unsqueeze(0)
         
-            if training:
-                # v_emb: [1, batch, dim]
-                if self.perfect:
-                    v_emb = self.emb_p(perf_s)
-                else:
-                    v_emb = self.emb_i(priv_s)
-                # v_emb: [1, batch, 2*dim]
-                v_in = torch.cat([o, v_emb], -1)
-                # values: [1, batch, 1]
-                values = self.value(v_in)
-                # print(values.shape)
-                # values: [batch]
-                values = values.squeeze(-1).squeeze(0)
+        assert probs.size() == legal_move.size()
+        assert legal_move.dim() == 3  # 1, batch, out_dim
+        legal_probs = probs + (legal_move - 1) * 1e10
+        # p: [batch, num_action]
+        p = torch.softmax(legal_probs, dim=-1).squeeze(0)
+        # greedy_action: [batch]
+        greedy_action = p.argmax(1).detach()
+    
+        if training:
+            # v_emb: [1, batch, dim]
+            if self.perfect:
+                v_emb = self.emb_p(perf_s)
             else:
-                values =  torch.zeros_like(greedy_action)
+                v_emb = self.emb_i(priv_s)
+            # v_emb: [1, batch, 2*dim]
+            v_in = torch.cat([o, v_emb], -1)
+            # values: [1, batch, 1]
+            values = self.value(v_in)
+            # print(values.shape)
+            # values: [batch]
+            values = values.squeeze(-1).squeeze(0)
         else:
-            a = self.fc_a(o)
-            # a:[batch, out_dim]
-            a = a.squeeze(0)
-            greedy_action = a
-            p = torch.zeros_like(a)
-            values = torch.zeros_like(a[:,0])
+            values =  torch.zeros_like(greedy_action)
+
         # turn it back
         # hid size: [num_layer, batch x num_player, dim]
         # -> [batch, num_layer, num_player, dim]
@@ -615,6 +605,60 @@ class PPOPublicLSTMNet(torch.jit.ScriptModule):
         c = c.view(*interim_hid_shape).transpose(0, 1)
 
         return greedy_action, {"h0": h, "c0": c}, p, values
+
+    @torch.jit.script_method
+    def act_other(
+        self,
+        priv_s: torch.Tensor,
+        publ_s: torch.Tensor,
+        hid: Dict[str, torch.Tensor],
+    ) -> Tuple[torch.Tensor, Dict[str, torch.Tensor]]:
+        # priv_s:[batch, dim]
+        # publ_s:[batch, dim]
+        # hid:[batch, num_layer, num_player, dim]
+        
+        assert priv_s.dim() == 2
+
+        bsize = hid["h0"].size(0)
+        assert hid["h0"].dim() == 4
+        # hid size: [batch, num_layer, num_player, dim]
+        # -> [num_layer, batch x num_player, dim]
+        hid = {
+            "h0": hid["h0"].transpose(0, 1).flatten(1, 2).contiguous(),
+            "c0": hid["c0"].transpose(0, 1).flatten(1, 2).contiguous(),
+        }
+
+        # priv_s:[1, batch, dim] : add the seq_len dim
+        priv_s = priv_s.unsqueeze(0)
+        # publ_s:[1, batch, dim]
+        publ_s = publ_s.unsqueeze(0)
+
+        # x:[1, batch, hid_dim]
+        x = self.publ_net(publ_s)
+        # publ_o:[1, batch, hid_dim]
+        publ_o, (h, c) = self.lstm(x, (hid["h0"], hid["c0"]))
+
+        # priv_o:[1, batch, hid_dim]
+        priv_o = self.priv_net(priv_s)
+        # o:[1, batch, hid_dim]
+        o = priv_o * publ_o
+        a = self.fc_a(o)
+        # a:[batch, out_dim]
+        a = a.squeeze(0)
+
+        # turn it back
+        # hid size: [num_layer, batch x num_player, dim]
+        # -> [batch, num_layer, num_player, dim]
+        interim_hid_shape = (
+            self.num_lstm_layer,
+            bsize,
+            -1,
+            self.hid_dim,
+        )
+        h = h.view(*interim_hid_shape).transpose(0, 1)
+        c = c.view(*interim_hid_shape).transpose(0, 1)
+
+        return a, {"h0": h, "c0": c}
 
     @torch.jit.script_method
     def forward(
@@ -689,5 +733,61 @@ class PPOPublicLSTMNet(torch.jit.ScriptModule):
             p = p.squeeze(0)
         return values, greedy_action, p, o
 
+    @torch.jit.script_method
+    def forward_other(
+        self,
+        priv_s: torch.Tensor,
+        publ_s: torch.Tensor,
+        legal_move: torch.Tensor,
+        action: torch.Tensor,
+        hid: Dict[str, torch.Tensor],
+    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+        assert (
+            priv_s.dim() == 3 or priv_s.dim() == 2
+        ), "dim = 3/2, [seq_len(optional), batch, dim]"
+
+        one_step = False
+        if priv_s.dim() == 2:
+            priv_s = priv_s.unsqueeze(0)
+            publ_s = publ_s.unsqueeze(0)
+            legal_move = legal_move.unsqueeze(0)
+            action = action.unsqueeze(0)
+            one_step = True
+
+        x = self.publ_net(publ_s)
+        if len(hid) == 0:
+            publ_o, _ = self.lstm(x)
+        else:
+            # x: [seq_len, batch, dim]
+            # hid: [num_layer, batch*num_player, dim]
+            
+            # publ_o: [seq_len, batch, dim]
+            publ_o, _ = self.lstm(x, (hid["h0"], hid["c0"]))
+        # priv_o: [seq_len, batch, dim]
+        priv_o = self.priv_net(priv_s)
+        # o: [seq_len, batch, dim]
+        o = priv_o * publ_o
+        a = self.fc_a(o)
+        v = self.fc_v(o)
+        q = duel(v, a, legal_move)
+
+        # q: [seq_len, batch, num_action]
+        # action: [seq_len, batch]
+        
+        # qa: [seq_len, batch]
+        qa = q.gather(2, action.unsqueeze(2)).squeeze(2)
+
+        assert q.size() == legal_move.size()
+        legal_q = (1 + q - q.min()) * legal_move
+        # greedy_action: [seq_len, batch]
+        greedy_action = legal_q.argmax(2).detach()
+
+        if one_step:
+            qa = qa.squeeze(0)
+            greedy_action = greedy_action.squeeze(0)
+            o = o.squeeze(0)
+            q = q.squeeze(0)
+        return qa, greedy_action, q, o
+    
     def pred_loss_1st(self, lstm_o, target, hand_slot_mask, seq_len):
         return cross_entropy(self.pred_1st, lstm_o, target, hand_slot_mask, seq_len)

@@ -122,6 +122,7 @@ TensorDict RNNTransition::toDict() {
 
 FFTransition rela::makeBatch(
     const std::vector<FFTransition>& transitions, const std::string& device) {
+  // std::cout << "FFTransition rela::makeBatch" << std::endl;
   std::vector<TensorDict> obsVec;
   std::vector<TensorDict> actionVec;
   std::vector<torch::Tensor> rewardVec;
@@ -162,6 +163,7 @@ FFTransition rela::makeBatch(
 
 RNNTransition rela::makeBatch(
     const std::vector<RNNTransition>& transitions, const std::string& device) {
+  // std::cout << "RNNTransition rela::makeBatch" << std::endl;
   std::vector<TensorDict> obsVec;
   std::vector<TensorDict> h0Vec;
   std::vector<TensorDict> actionVec;
@@ -201,11 +203,17 @@ RNNTransition rela::makeBatch(
     batch.seqLen = batch.seqLen.to(d);
   }
 
+  // for (auto& kv : batch.action) {
+  //   std::cout << kv.first << std::endl;
+  //   std::cout << kv.second.sizes() << std::endl;
+  // }
+
   return batch;
 }
 
 TensorDict rela::makeBatch(
     const std::vector<TensorDict>& transitions, const std::string& device) {
+  // std::cout << "TensorDict rela::makeBatch" << std::endl;
   auto batch = tensor_dict::stack(transitions, 0);
   if (device != "cpu") {
     auto d = torch::Device(device);
@@ -213,5 +221,9 @@ TensorDict rela::makeBatch(
       batch[kv.first] = kv.second.to(d);
     }
   }
+  // for (auto& kv : batch) {
+  //   std::cout << kv.first << std::endl;
+  //   std::cout << kv.second.sizes() << std::endl;
+  // }
   return batch;
 }
