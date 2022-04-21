@@ -29,9 +29,9 @@ import utils
 
 
 def parse_args():
-    parser = argparse.ArgumentParser(description="train dqn on hanabi")
-    parser.add_argument("--save_dir", type=str, default="exps/exp1")
-    parser.add_argument("--method", type=str, default="vdn")
+    parser = argparse.ArgumentParser(description="train ppo on hanabi")
+    parser.add_argument("--save_dir", type=str, default="exps/ppo1")
+    parser.add_argument("--method", type=str, default="ppo")
     parser.add_argument("--shuffle_color", type=int, default=0)
     parser.add_argument("--aux_weight", type=float, default=0)
     parser.add_argument("--boltzmann_act", type=int, default=0)
@@ -71,16 +71,16 @@ def parse_args():
 
     parser.add_argument("--train_device", type=str, default="cuda:0")
     parser.add_argument("--batchsize", type=int, default=128)
-    parser.add_argument("--num_epoch", type=int, default=5000)
-    parser.add_argument("--epoch_len", type=int, default=1000)
-    parser.add_argument("--num_update_between_sync", type=int, default=2500)
+    parser.add_argument("--num_epoch", type=int, default=1000)
+    parser.add_argument("--epoch_len", type=int, default=200)
+    parser.add_argument("--num_update_between_sync", type=int, default=500)
 
     # DQN settings
-    parser.add_argument("--multi_step", type=int, default=3)
+    parser.add_argument("--multi_step", type=int, default=1)
 
     # replay buffer settings
-    parser.add_argument("--burn_in_frames", type=int, default=10000)
-    parser.add_argument("--replay_buffer_size", type=int, default=100000)
+    parser.add_argument("--burn_in_frames", type=int, default=2000)
+    parser.add_argument("--replay_buffer_size", type=int, default=20000)
     parser.add_argument(
         "--priority_exponent", type=float, default=0.9, help="alpha in p-replay"
     )
@@ -97,8 +97,17 @@ def parse_args():
     # actor setting
     parser.add_argument("--act_base_eps", type=float, default=0.1)
     parser.add_argument("--act_eps_alpha", type=float, default=7)
-    parser.add_argument("--act_device", type=str, default="cuda:1")
+    parser.add_argument("--act_device", type=str, default="cuda:0")
     parser.add_argument("--actor_sync_freq", type=int, default=10)
+    
+    # PPO setting
+    parser.add_argument("--clip_param", type=float, default=0.2)
+    parser.add_argument("--gae_lamda", type=float, default=0.95)
+    parser.add_argument("--c_1", type=float, default=0.5)
+    parser.add_argument("--c_2", type=float, default=0.0001)
+    
+    # PTIE setting
+    parser.add_argument("--perfect_training", type=int, default=1)
 
     args = parser.parse_args()
     if args.off_belief == 1:
@@ -106,7 +115,7 @@ def parse_args():
         args.multi_step = 1
         assert args.net in ["publ-lstm"], "should only use publ-lstm style network"
         assert not args.shuffle_color
-    assert args.method in ["vdn", "iql"]
+    assert args.method in ["vdn", "iql", "ppo"]
     return args
 
 
@@ -156,6 +165,13 @@ if __name__ == "__main__":
     )
 
     agent = r2d2.R2D2Agent(
+        (args.method == "ppo"),
+        args.perfect_training,
+        args.clip_param,
+        args.gae_lamda,
+        args.c_1,
+        args.c_2,
+        True, # training
         (args.method == "vdn"),
         args.multi_step,
         args.gamma,
@@ -170,7 +186,8 @@ if __name__ == "__main__":
         False,  # uniform priority
         args.off_belief,
     )
-    agent.sync_target_with_online()
+    if args.method != "ppo":
+        agent.sync_target_with_online()
 
     if args.load_model and args.load_model != "None":
         if args.off_belief and args.belief_model != "None":
@@ -191,7 +208,7 @@ if __name__ == "__main__":
     agent = agent.to(args.train_device)
     optim = torch.optim.Adam(agent.online_net.parameters(), lr=args.lr, eps=args.eps)
     print(agent)
-    eval_agent = agent.clone(args.train_device, {"vdn": False, "boltzmann_act": False})
+    eval_agent = agent.clone(args.train_device, {"training": False, "vdn": False, "boltzmann_act": False})
 
     replay_buffer = rela.RNNPrioritizedReplay(
         args.replay_buffer_size,
@@ -276,7 +293,8 @@ if __name__ == "__main__":
         for batch_idx in range(args.epoch_len):
             num_update = batch_idx + epoch * args.epoch_len
             if num_update % args.num_update_between_sync == 0:
-                agent.sync_target_with_online()
+                if args.method != "ppo":
+                    agent.sync_target_with_online()
             if num_update % args.actor_sync_freq == 0:
                 act_group.update_model(agent)  # model: agent -> act_group
 
@@ -287,7 +305,10 @@ if __name__ == "__main__":
             stopwatch.time("sample data")
 
             # rl_loss: [batch]  priority: [batch]  online_q: [seq_len, batch, num_action]
-            loss, priority, online_q = agent.loss(batch, args.aux_weight, stat)
+            if args.method == "ppo":
+                loss, priority = agent.loss(batch, args.aux_weight, stat)
+            else:
+                loss, priority, online_q = agent.loss(batch, args.aux_weight, stat)
             if clone_bot is not None and args.clone_weight > 0:
                 bc_loss = agent.behavior_clone_loss(
                     online_q, batch, args.clone_t, clone_bot, stat

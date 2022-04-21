@@ -10,10 +10,13 @@
 # LICENSE file in the root directory of this source tree.
 #
 from collections import OrderedDict
+from ctypes import c_int16
+from xmlrpc.client import Boolean
+import numpy as np
 import torch
 import torch.nn as nn
 from typing import Tuple, Dict
-from net import FFWDNet, PublicLSTMNet, LSTMNet
+from net import FFWDNet, PublicLSTMNet, LSTMNet, PPOPublicLSTMNet
 
 
 class R2D2Agent(torch.jit.ScriptModule):
@@ -29,6 +32,13 @@ class R2D2Agent(torch.jit.ScriptModule):
 
     def __init__(
         self,
+        ppo,
+        perfect,
+        clip_param,
+        gae_lamda,
+        c_1,
+        c_2,
+        training,
         vdn,
         multi_step,
         gamma,
@@ -51,6 +61,11 @@ class R2D2Agent(torch.jit.ScriptModule):
         if net == "ffwd":
             self.online_net = FFWDNet(in_dim, hid_dim, out_dim).to(device)
             self.target_net = FFWDNet(in_dim, hid_dim, out_dim).to(device)
+        elif net == "publ-lstm":
+            self.online_net = PPOPublicLSTMNet(
+                device, in_dim, hid_dim, out_dim, num_lstm_layer, perfect
+            ).to(device)
+            self.target_net = None
         elif net == "publ-lstm":
             self.online_net = PublicLSTMNet(
                 device, in_dim, hid_dim, out_dim, num_lstm_layer
@@ -75,9 +90,17 @@ class R2D2Agent(torch.jit.ScriptModule):
         else:
             assert False, f"{net} not implemented"
 
-        for p in self.target_net.parameters():
-            p.requires_grad = False
+        if not ppo:
+            for p in self.target_net.parameters():
+                p.requires_grad = False
 
+        self.ppo = ppo
+        self.perfect = perfect
+        self.clip_param = clip_param
+        self.gae_lamda = gae_lamda
+        self.c_1 = c_1
+        self.c_2 = c_2
+        self.training = training
         self.vdn = vdn
         self.multi_step = multi_step
         self.gamma = gamma
@@ -100,6 +123,13 @@ class R2D2Agent(torch.jit.ScriptModule):
         if overwrite is None:
             overwrite = {}
         cloned = type(self)(
+            self.ppo,
+            self.perfect,
+            self.clip_param,
+            self.gae_lamda,
+            self.c_1,
+            self.c_2,
+            overwrite.get("training", self.training),
             overwrite.get("vdn", self.vdn),
             self.multi_step,
             self.gamma,
@@ -119,7 +149,7 @@ class R2D2Agent(torch.jit.ScriptModule):
             max_len=self.max_len,
         )
         cloned.load_state_dict(self.state_dict())
-        cloned.train(self.training)
+        cloned.train(overwrite.get("training", self.training))
         return cloned.to(device)
 
     def sync_target_with_online(self):
@@ -132,6 +162,8 @@ class R2D2Agent(torch.jit.ScriptModule):
         publ_s: torch.Tensor,
         legal_move: torch.Tensor,
         hid: Dict[str, torch.Tensor],
+        perf_s: torch.Tensor,
+        training: Boolean
     ) -> Tuple[torch.Tensor, Dict[str, torch.Tensor]]:
         # priv_s:[batch, dim]
         # publ_s:[batch, dim]
@@ -139,7 +171,7 @@ class R2D2Agent(torch.jit.ScriptModule):
         # hid:[batch, num_layer, num_player, dim]
         
         # adv:[batch, out_dim] new_hid:{'':[batch, num_layer, num_player, dim],}
-        adv, new_hid = self.online_net.act(priv_s, publ_s, hid)
+        adv, new_hid, _, _ = self.online_net.act(priv_s, publ_s, hid, legal_move, perf_s, training)
         # legal_adv:[batch, out_dim]
         legal_adv = (1 + adv - adv.min()) * legal_move
         # greedy_action:[batch]
@@ -154,9 +186,11 @@ class R2D2Agent(torch.jit.ScriptModule):
         legal_move: torch.Tensor,
         temperature: torch.Tensor,
         hid: Dict[str, torch.Tensor],
+        perf_s: torch.Tensor,
+        training: Boolean
     ) -> Tuple[torch.Tensor, Dict[str, torch.Tensor], torch.Tensor]:
         temperature = temperature.unsqueeze(1)
-        adv, new_hid = self.online_net.act(priv_s, publ_s, hid)
+        adv, new_hid, _, _ = self.online_net.act(priv_s, publ_s, hid, legal_move, perf_s, training)
         assert adv.dim() == temperature.dim()
         logit = adv / temperature
         legal_logit = logit - (1 - legal_move) * 1e30
@@ -192,15 +226,27 @@ class R2D2Agent(torch.jit.ScriptModule):
         hid = {"h0": obs["h0"], "c0": obs["c0"]}
 
         if self.boltzmann:
+            perf_s = torch.zeros_like(priv_s)
             temp = obs["temperature"].flatten(0, 1)
-            greedy_action, new_hid, prob = self.boltzmann_act(
-                priv_s, publ_s, legal_move, temp, hid
-            )
+            greedy_action, new_hid, prob = self.boltzmann_act(priv_s, publ_s, legal_move, temp, hid, perf_s, self.training)
             reply = {"prob": prob}
         else:
-            # greedy_action: [batch]
-            # new_hid:{'':[batch, num_layer, num_player, dim],}
-            greedy_action, new_hid = self.greedy_act(priv_s, publ_s, legal_move, hid)
+            if self.ppo:
+                if self.perfect:
+                    own_hand = obs["own_hand"].flatten(2, 3).contiguous()
+                    perf_s = torch.cat([obs["priv_s"], own_hand], dim=-1)
+                    assert perf_s.shape[-1] == 783
+                else:
+                    perf_s = torch.zeros_like(priv_s)
+                # greedy_action:[batch]
+                # new_hid:{'':[batch, num_layer, num_player, dim],}
+                # old_probs:[batch, out_dim]
+                # old_values:[batch]
+                greedy_action, new_hid, old_probs, old_values = self.online_net.act(priv_s, publ_s, hid, legal_move, perf_s, self.training)
+            else:
+                # greedy_action: [batch]
+                # new_hid:{'':[batch, num_layer, num_player, dim],}
+                greedy_action, new_hid = self.greedy_act(priv_s, publ_s, hid, legal_move, perf_s, self.training)
             reply = {}
 
         if self.greedy:
@@ -226,6 +272,9 @@ class R2D2Agent(torch.jit.ScriptModule):
         reply["h0"] = new_hid["h0"].detach().cpu()
         # batch, num_layer, num_player, dim
         reply["c0"] = new_hid["c0"].detach().cpu()
+        reply["old_probs"] = old_probs.cpu()
+        if self.training:
+            reply["old_values"] = old_values.cpu()
         return reply
 
     @torch.jit.script_method
@@ -264,13 +313,20 @@ class R2D2Agent(torch.jit.ScriptModule):
             next_q = self.target_net(priv_s, publ_s, legal_move, next_a, fwd_hid)[2]
             qa = (next_q * next_pa).sum(1)
         else:
-            # next_a [seq_len, batch]
-            next_a = self.greedy_act(priv_s, publ_s, legal_move, act_hid)[0]
-            # qa: [seq_len, batch]
-            qa = self.target_net(priv_s, publ_s, legal_move, next_a, fwd_hid)[0]
+            if self.ppo:
+                pass
+            else:
+                # next_a [batch]
+                next_a = self.greedy_act(priv_s, publ_s, legal_move, act_hid)[0]
+                # qa: [batch]
+                qa = self.target_net(priv_s, publ_s, legal_move, next_a, fwd_hid)[0]
 
         assert reward.size() == qa.size()
-        # 1-step TD-target: [seq_len, batch]
+        
+        if self.ppo:
+            pass
+
+        # 1-step TD-target: [batch]
         target = reward + (1 - terminal) * self.gamma * qa
         return {"target": target.detach()}
 
@@ -314,9 +370,14 @@ class R2D2Agent(torch.jit.ScriptModule):
         bootstrap = input_["bootstrap"]
         seq_len = input_["seq_len"]
         # err: [seq_len, batch]
-        err, _, _ = self.td_error(
+        if self.ppo:
+            _, err, _ = self.td_error(
             obs, hid, action, reward, terminal, bootstrap, seq_len
-        )
+            )
+        else:
+            err, _, _ = self.td_error(
+                obs, hid, action, reward, terminal, bootstrap, seq_len
+            )
         priority = err.abs()
         priority = self.aggregate_priority(priority, seq_len).detach().cpu()
         return {"priority": priority}
@@ -336,7 +397,9 @@ class R2D2Agent(torch.jit.ScriptModule):
         priv_s = obs["priv_s"]
         publ_s = obs["publ_s"]
         legal_move = obs["legal_move"]
-        action = action["a"]
+        action_ = action["a"]
+        old_probs = action["old_probs"]
+        old_values = action["old_values"]
 
         # hid size: [num_layer, batch, num_player, dim]
         # -> [num_layer, batch*num_player, dim]
@@ -349,21 +412,80 @@ class R2D2Agent(torch.jit.ScriptModule):
             priv_s = priv_s.flatten(1, 2)
             publ_s = publ_s.flatten(1, 2)
             legal_move = legal_move.flatten(1, 2)
-            action = action.flatten(1, 2)
+            action_ = action_.flatten(1, 2)
 
         # this only works because the trajectories are padded,
         # i.e. no terminal in the middle
         # !in the next few lines, "seq_len" dim means "max_seq_len" in the former context
-        # online_qa: [seq_len, batch]
-        # greedy_a: [seq_len, batch]
-        # online_q: [seq_len, batch, num_action]
-        # lstm_o: [seq_len, batch, dim]
-        online_qa, greedy_a, online_q, lstm_o = self.online_net(
-            priv_s, publ_s, legal_move, action, hid
-        )
+        
+        if self.ppo:
+            if self.perfect:
+                own_hand = obs["own_hand"].flatten(2, 3).contiguous()
+                perf_s = torch.cat([obs["priv_s"], own_hand], dim=-1)
+                assert perf_s.shape[-1] == 783
+            else:
+                perf_s = torch.zeros_like(priv_s)
+            # values: [seq_len, batch]
+            # greedy_a: [seq_len, batch]
+            # probs: [seq_len, batch, num_action]
+            # lstm_o: [seq_len, batch, dim]
+            old_values, greedy_a, probs, lstm_o = self.online_net(
+                priv_s, publ_s, legal_move, action_, hid, perf_s, self.training
+            )
+        else:
+            # online_qa: [seq_len, batch]
+            # greedy_a: [seq_len, batch]
+            # online_q: [seq_len, batch, num_action]
+            # lstm_o: [seq_len, batch, dim]
+            online_qa, greedy_a, online_q, lstm_o = self.online_net(
+                priv_s, publ_s, legal_move, action_, hid
+            )
 
         if self.off_belief:
             target = obs["target"]
+        elif self.ppo:
+            # Calculate GAE Advantage
+            rewards = np.array(reward)  # [seq_len, batch]
+            advs = np.zeros_like(rewards)  # [seq_len, batch]
+            value_target = np.zeros_like(rewards)  # [seq_len, batch]
+            nextgae = np.zeros_like(rewards[0, :])  # [batch]
+
+            for i in range(rewards.shape[1]):
+                for t in reversed(range(rewards.shape[0])):
+                    if t == seq_len[i] - 1:
+                        curnonterminal = 0
+                        nextvalues = 0
+                    else:
+                        curnonterminal = 1.0
+                        nextvalues = old_values[t + 1, i]
+                    
+                    value_target[t, i] = rewards[t, i] + bootstrap[t, i] * (self.gamma ** self.multi_step) * nextvalues * curnonterminal
+                    delta = value_target[t, i] - old_values[t, i]
+                    advs[t, i] = nextgae[i] = delta + bootstrap[t, i] * (self.gamma ** self.multi_step) * self.gae_lamda * curnonterminal * nextgae[i]
+            
+            advs = torch.tensor(advs)
+            value_target = torch.tensor(value_target)
+            
+            # policy loss
+            # [seq_len, batch]
+            probs_a = probs.gather(2, action_.unsqueeze(2)).squeeze(2)
+            old_probs_a = old_probs.gather(2, action_.unsqueeze(2)).squeeze(2)
+            ratios = torch.exp(torch.log(torch.clamp(probs_a, 1e-10, 1.0)) - torch.log(torch.clamp(old_probs_a, 1e-10, 1.0)))
+            clipped_ratios = torch.clamp(ratios, 1 - self.clip_param, 1 + self.clip_param)
+            loss_p = torch.minimum(torch.multiply(advs.detach(), ratios), torch.multiply(advs.detach(), clipped_ratios))
+            
+            # value loss
+            # [seq_len, batch]
+            loss_v = nn.functional.smooth_l1_loss(old_values, value_target.detach(), reduction="none")
+            
+            # entropy loss
+            # [seq_len, batch]
+            loss_entropy = -torch.sum(probs * torch.log(torch.clamp(probs, 1e-10, 1.0)), axis=-1)
+            
+            # total loss
+            # [seq_len, batch]
+            loss = -loss_p + self.c_1 * loss_v - self.c_2 * loss_entropy
+            
         else:
             target_qa, _, target_q, _ = self.target_net(
                 priv_s, publ_s, legal_move, greedy_a, hid
@@ -393,7 +515,7 @@ class R2D2Agent(torch.jit.ScriptModule):
             )
             target_qa[-self.multi_step :] = 0
             assert target_qa.size() == reward.size()
-            # This reward is sum discounted reward form t_0 to t_current
+            # This reward is sum discounted reward form t_current to t_{multi_step - 1}
             target = reward + bootstrap * (self.gamma ** self.multi_step) * target_qa
         # seq_len: [batch]
         mask = torch.arange(0, max_seq_len, device=seq_len.device)
@@ -411,7 +533,13 @@ class R2D2Agent(torch.jit.ScriptModule):
         # target: [seq_len, batch]
         # e.g. if a data seq_len is 5, it only has loss for the first 5 steps, 
         # and 0 loss for the rest of steps(some number like 75).
-        err = (target.detach() - online_qa) * mask
+        if self.ppo:
+            # [seq_len, batch]
+            loss = loss * mask
+            err = (value_target.detach() - old_values) * mask
+            return loss, err, lstm_o
+        else:
+            err = (target.detach() - online_qa) * mask
         if self.off_belief and "valid_fict" in obs:
             err = err * obs["valid_fict"]
         
@@ -460,22 +588,33 @@ class R2D2Agent(torch.jit.ScriptModule):
         return agg_priority
 
     def loss(self, batch, aux_weight, stat):
-        # err: [seq_len, batch]
-        # lstm_o: [seq_len, batch, dim]
-        # online_q: [seq_len, batch, num_action]
-        err, lstm_o, online_q = self.td_error(
-            batch.obs,
-            batch.h0,
-            batch.action,
-            batch.reward,
-            batch.terminal,
-            batch.bootstrap,
-            batch.seq_len,
-        )
-        # smooth_l1_loss: L(err) -> 0
-        rl_loss = nn.functional.smooth_l1_loss(
-            err, torch.zeros_like(err), reduction="none"
-        )
+        if not self.ppo:
+            # err: [seq_len, batch]
+            # lstm_o: [seq_len, batch, dim]
+            # online_q: [seq_len, batch, num_action]
+            err, lstm_o, online_q = self.td_error(
+                batch.obs,
+                batch.h0,
+                batch.action,
+                batch.reward,
+                batch.terminal,
+                batch.bootstrap,
+                batch.seq_len,
+            )
+            # smooth_l1_loss: L(err) -> 0
+            rl_loss = nn.functional.smooth_l1_loss(
+                err, torch.zeros_like(err), reduction="none"
+            )
+        else:
+            rl_loss, err, lstm_o = self.td_error(
+                batch.obs,
+                batch.h0,
+                batch.action,
+                batch.reward,
+                batch.terminal,
+                batch.bootstrap,
+                batch.seq_len,
+            )
         # rl_loss: [batch]
         rl_loss = rl_loss.sum(0)
         stat["rl_loss"].feed((rl_loss / batch.seq_len).mean().item())  # rl_loss: double
@@ -487,6 +626,8 @@ class R2D2Agent(torch.jit.ScriptModule):
 
         loss = rl_loss
         if aux_weight <= 0:
+            if self.ppo:
+                return loss, priority
             # rl_loss: [batch]  priority: [batch]  online_q: [seq_len, batch, num_action]
             return loss, priority, online_q
 
@@ -509,7 +650,7 @@ class R2D2Agent(torch.jit.ScriptModule):
                 stat,
             )
             loss = rl_loss + aux_weight * pred
-
+        
         return loss, priority, online_q
 
     def behavior_clone_loss(self, online_q, batch, t, clone_bot, stat):

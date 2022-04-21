@@ -129,6 +129,37 @@ class ActGroup:
                         game_actors[k].set_partners(partners)
                     thread_actors.append(game_actors)
                 self.actors.append(thread_actors)
+        elif method == "ppo":
+            for i in range(num_thread):
+                thread_actors = []
+                for j in range(num_game_per_thread):
+                    game_actors = []
+                    for k in range(num_player):
+                        actor = hanalearn.R2D2Actor(
+                            self.model_runners[i % self.num_runners],
+                            seed,
+                            num_player,
+                            k,
+                            explore_eps,
+                            boltzmann_t,
+                            False,
+                            sad,
+                            shuffle_color,
+                            hide_action,
+                            False,  # not trinary: in order to get perfect info for PTIE
+                            replay_buffer,
+                            multi_step,
+                            max_len,
+                            gamma,
+                        )
+                        seed += 1
+                        game_actors.append(actor)
+                    for k in range(num_player):
+                        partners = game_actors[:]
+                        partners[k] = None
+                        game_actors[k].set_partners(partners)
+                    thread_actors.append(game_actors)
+                self.actors.append(thread_actors)
         print("ActGroup created")
 
     def start(self):

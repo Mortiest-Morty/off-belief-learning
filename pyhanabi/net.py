@@ -10,6 +10,7 @@
 # LICENSE file in the root directory of this source tree.
 #
 from collections import OrderedDict
+from xmlrpc.client import Boolean
 import torch
 import torch.nn as nn
 from typing import Tuple, Dict, Optional
@@ -433,6 +434,260 @@ class PublicLSTMNet(torch.jit.ScriptModule):
             o = o.squeeze(0)
             q = q.squeeze(0)
         return qa, greedy_action, q, o
+
+    def pred_loss_1st(self, lstm_o, target, hand_slot_mask, seq_len):
+        return cross_entropy(self.pred_1st, lstm_o, target, hand_slot_mask, seq_len)
+
+
+class PPOPublicLSTMNet(torch.jit.ScriptModule):
+    __constants__ = ["hid_dim", "out_dim", "num_lstm_layer"]
+
+    def __init__(self, device, in_dim, hid_dim, out_dim, num_lstm_layer, perfect):
+        super().__init__()
+        # for backward compatibility
+        if isinstance(in_dim, int):
+            assert in_dim == 783
+            self.in_dim = in_dim
+            self.priv_in_dim = in_dim - 125  # priv = public info + player i's private info
+            self.publ_in_dim = in_dim - 2 * 125
+            self.perfect_in_dim = in_dim
+        else:
+            self.in_dim = in_dim
+            self.priv_in_dim = in_dim[1]
+            self.publ_in_dim = in_dim[2]
+            self.perfect_in_dim = in_dim[1] + 125
+
+        self.perfect = perfect
+        self.hid_dim = hid_dim
+        self.out_dim = out_dim
+        self.num_ff_layer = 1
+        self.num_lstm_layer = num_lstm_layer
+
+        self.priv_net = nn.Sequential(
+            nn.Linear(self.priv_in_dim, self.hid_dim),
+            nn.ReLU(),
+            nn.Linear(self.hid_dim, self.hid_dim),
+            nn.ReLU(),
+            nn.Linear(self.hid_dim, self.hid_dim),
+            nn.ReLU(),
+        )
+
+        ff_layers = [nn.Linear(self.publ_in_dim, self.hid_dim), nn.ReLU()]
+        for i in range(1, self.num_ff_layer):
+            ff_layers.append(nn.Linear(self.hid_dim, self.hid_dim))
+            ff_layers.append(nn.ReLU())
+        self.publ_net = nn.Sequential(*ff_layers)
+
+        self.lstm = nn.LSTM(
+            self.hid_dim,
+            self.hid_dim,
+            num_layers=self.num_lstm_layer,
+        ).to(device)
+        self.lstm.flatten_parameters()
+
+        self.policy = nn.Sequential(
+            nn.Linear(self.hid_dim, self.hid_dim // 4),
+            nn.ReLU(),
+            nn.Linear(self.hid_dim // 4, self.hid_dim // 4),
+            nn.ReLU(),
+            nn.Linear(self.hid_dim // 4, self.out_dim),
+        )
+        
+        self.fc = nn.Linear(self.hid_dim, self.hid_dim)
+        
+        self.emb_i = nn.Sequential(
+            nn.Linear(self.priv_in_dim, self.hid_dim),
+            nn.ReLU(),
+        )
+        
+        self.emb_p = nn.Sequential(
+            nn.Linear(self.perfect_in_dim, self.hid_dim),
+            nn.ReLU(),
+        )
+        
+        self.value = nn.Sequential(
+            nn.Linear(2 * self.hid_dim, self.hid_dim // 4),
+            nn.ReLU(),
+            nn.Linear(self.hid_dim // 4, self.hid_dim // 4),
+            nn.ReLU(),
+            nn.Linear(self.hid_dim // 4, 1),
+        )
+        
+        self.fc_a = nn.Linear(self.hid_dim, self.out_dim)
+        # for aux task
+        self.pred_1st = nn.Linear(self.hid_dim, 5 * 3)
+
+    @torch.jit.script_method
+    def get_h0(self, batchsize: int) -> Dict[str, torch.Tensor]:
+        shape = (self.num_lstm_layer, batchsize, self.hid_dim)
+        hid = {"h0": torch.zeros(*shape), "c0": torch.zeros(*shape)}
+        return hid
+
+    @torch.jit.script_method
+    def act(
+        self,
+        priv_s: torch.Tensor,
+        publ_s: torch.Tensor,
+        hid: Dict[str, torch.Tensor],
+        legal_move: torch.Tensor,
+        perf_s: torch.Tensor,
+        training: Boolean
+    ) -> Tuple[torch.Tensor, Dict[str, torch.Tensor], torch.Tensor, torch.Tensor]:
+        # priv_s:[batch, dim]
+        # publ_s:[batch, dim]
+        # hid:[batch, num_layer, num_player, dim]
+        
+        assert priv_s.dim() == 2
+
+        bsize = hid["h0"].size(0)
+        assert hid["h0"].dim() == 4
+        # hid size: [batch, num_layer, num_player, dim]
+        # -> [num_layer, batch x num_player, dim]
+        hid = {
+            "h0": hid["h0"].transpose(0, 1).flatten(1, 2).contiguous(),
+            "c0": hid["c0"].transpose(0, 1).flatten(1, 2).contiguous(),
+        }
+
+        # priv_s:[1, batch, dim] : add the seq_len dim
+        priv_s = priv_s.unsqueeze(0)
+        # publ_s:[1, batch, dim]
+        publ_s = publ_s.unsqueeze(0)
+        
+        if self.perfect:
+            perf_s = perf_s.unsqueeze(0)
+
+        # x:[1, batch, hid_dim]
+        x = self.publ_net(publ_s)
+        # publ_o:[1, batch, hid_dim]
+        publ_o, (h, c) = self.lstm(x, (hid["h0"], hid["c0"]))
+
+        # priv_o:[1, batch, hid_dim]
+        priv_o = self.priv_net(priv_s)
+        # o:[1, batch, hid_dim]
+        o = priv_o * publ_o
+        
+        if self.ppo:
+            o = self.fc(o)
+            
+            # probs: [1, batch, out_dim]
+            probs = self.policy(o)
+            
+            assert probs.size() == legal_move.size()
+            assert legal_move.dim() == 3  # 1, batch, out_dim
+            legal_probs = probs + (legal_move - 1) * 1e10
+            # p: [1, batch, num_action]
+            p = torch.softmax(legal_probs, dim=-1)
+            # greedy_action: [batch]
+            greedy_action = p.argmax(2).squeeze(0).detach()
+        
+            if training:
+                # v_emb: [1, batch, dim]
+                if self.perfect:
+                    v_emb = self.emb_p(perf_s)
+                else:
+                    v_emb = self.emb_i(priv_s)
+                # v_emb: [1, batch, 2*dim]
+                v_in = torch.cat([o, v_emb], -1)
+                # values: [1, batch, 1]
+                values = self.value(v_in)
+                # print(values.shape)
+                # values: [batch]
+                values = values.squeeze(-1).squeeze(0)
+            else:
+                values =  torch.zeros_like(greedy_action)
+        else:
+            a = self.fc_a(o)
+            # a:[batch, out_dim]
+            a = a.squeeze(0)
+            greedy_action = a
+            p = torch.zeros_like(a)
+            values = torch.zeros_like(a[:,0])
+        # turn it back
+        # hid size: [num_layer, batch x num_player, dim]
+        # -> [batch, num_layer, num_player, dim]
+        interim_hid_shape = (
+            self.num_lstm_layer,
+            bsize,
+            -1,
+            self.hid_dim,
+        )
+        h = h.view(*interim_hid_shape).transpose(0, 1)
+        c = c.view(*interim_hid_shape).transpose(0, 1)
+
+        return greedy_action, {"h0": h, "c0": c}, p, values
+
+    @torch.jit.script_method
+    def forward(
+        self,
+        priv_s: torch.Tensor,
+        publ_s: torch.Tensor,
+        legal_move: torch.Tensor,
+        action: torch.Tensor,
+        hid: Dict[str, torch.Tensor],
+        perf_s: torch.Tensor,
+        training: Boolean
+    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+        assert (
+            priv_s.dim() == 3 or priv_s.dim() == 2
+        ), "dim = 3/2, [seq_len(optional), batch, dim]"
+
+        one_step = False
+        if priv_s.dim() == 2:
+            priv_s = priv_s.unsqueeze(0)
+            publ_s = publ_s.unsqueeze(0)
+            legal_move = legal_move.unsqueeze(0)
+            action = action.unsqueeze(0)
+            if self.perfect:
+                perf_s = perf_s.unsqueeze(0)
+            one_step = True
+
+        x = self.publ_net(publ_s)
+        if len(hid) == 0:
+            publ_o, _ = self.lstm(x)
+        else:
+            # x: [seq_len, batch, dim]
+            # hid: [num_layer, batch*num_player, dim]
+            
+            # publ_o: [seq_len, batch, dim]
+            publ_o, _ = self.lstm(x, (hid["h0"], hid["c0"]))
+        # priv_o: [seq_len, batch, dim]
+        priv_o = self.priv_net(priv_s)
+        # o: [seq_len, batch, dim]
+        o = priv_o * publ_o
+        o = self.fc(o)
+        
+        # probs: [seq_len, batch, out_dim]
+        probs = self.policy(o)
+        
+        assert probs.size() == legal_move.size()
+        assert legal_move.dim() == 3  # seq, batch, out_dim
+        legal_probs = probs + (legal_move - 1) * 1e10
+        # p: [seq_len, batch, num_action]
+        p = torch.softmax(legal_probs, dim=-1)
+        # greedy_action: [seq_len, batch]
+        greedy_action = p.argmax(2).detach()
+        
+        if training:
+            # v_emb: [seq_len, batch, dim]
+            if self.perfect:
+                v_emb = self.emb_p(perf_s)
+            else:
+                v_emb = self.emb_i(priv_s)
+            # v_emb: [seq_len, batch, 2*dim]
+            v_in = torch.cat([o, v_emb], -1)
+            # values: [seq_len, batch, 1]
+            values = self.value(v_in)
+            # values: [seq_len, batch]
+            values = values.squeeze(-1)
+        else:
+            values = torch.zeros_like(greedy_action)
+        
+        if one_step:
+            values = values.squeeze(0)
+            greedy_action = greedy_action.squeeze(0)
+            o = o.squeeze(0)
+            p = p.squeeze(0)
+        return values, greedy_action, p, o
 
     def pred_loss_1st(self, lstm_o, target, hand_slot_mask, seq_len):
         return cross_entropy(self.pred_1st, lstm_o, target, hand_slot_mask, seq_len)
