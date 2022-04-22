@@ -72,15 +72,15 @@ def parse_args():
     parser.add_argument("--train_device", type=str, default="cuda:0")
     parser.add_argument("--batchsize", type=int, default=128)
     parser.add_argument("--num_epoch", type=int, default=1000)
-    parser.add_argument("--epoch_len", type=int, default=200)
+    parser.add_argument("--epoch_len", type=int, default=500)
     parser.add_argument("--num_update_between_sync", type=int, default=500)
 
     # DQN settings
     parser.add_argument("--multi_step", type=int, default=1)
 
     # replay buffer settings
-    parser.add_argument("--burn_in_frames", type=int, default=2000)
-    parser.add_argument("--replay_buffer_size", type=int, default=20000)
+    parser.add_argument("--burn_in_frames", type=int, default=5000)
+    parser.add_argument("--replay_buffer_size", type=int, default=40000)
     parser.add_argument(
         "--priority_exponent", type=float, default=0.9, help="alpha in p-replay"
     )
