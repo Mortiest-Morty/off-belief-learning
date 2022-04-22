@@ -82,6 +82,7 @@ def render_folder(
     if show:
         plt.tight_layout()
         plt.show()
+    plt.savefig('iql1.png', bbox_inches='tight')
 
 
 def render_cross_play_matrix(logfile, figsize=(15, 15)):
@@ -167,3 +168,7 @@ def plot_rl_vs_bp(
     if show:
         plt.tight_layout()
         plt.show()
+
+
+if __name__ == "__main__":
+    render_folder("../exps", "scores", include=["iql1"], exclude=["ppo1"])

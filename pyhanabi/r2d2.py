@@ -37,7 +37,6 @@ class R2D2Agent(torch.jit.ScriptModule):
         gae_lamda,
         c_1,
         c_2,
-        training,
         vdn,
         multi_step,
         gamma,
@@ -99,7 +98,6 @@ class R2D2Agent(torch.jit.ScriptModule):
         self.gae_lamda = gae_lamda
         self.c_1 = c_1
         self.c_2 = c_2
-        self.training = training
         self.vdn = vdn
         self.multi_step = multi_step
         self.gamma = gamma
@@ -128,7 +126,6 @@ class R2D2Agent(torch.jit.ScriptModule):
             self.gae_lamda,
             self.c_1,
             self.c_2,
-            overwrite.get("training", self.training),
             overwrite.get("vdn", self.vdn),
             self.multi_step,
             self.gamma,
@@ -148,7 +145,7 @@ class R2D2Agent(torch.jit.ScriptModule):
             max_len=self.max_len,
         )
         cloned.load_state_dict(self.state_dict())
-        cloned.train(overwrite.get("training", self.training))
+        cloned.train(self.training)
         return cloned.to(device)
 
     def sync_target_with_online(self):
@@ -228,7 +225,7 @@ class R2D2Agent(torch.jit.ScriptModule):
             old_values = torch.zeros_like(greedy_action)
         else:
             if self.ppo:
-                if self.perfect:
+                if self.perfect and self.training:
                     # print(obs["priv_s"].shape)
                     # print(obs["own_hand"].shape)
                     if obs["own_hand"].dim() == 2:
@@ -238,6 +235,7 @@ class R2D2Agent(torch.jit.ScriptModule):
                     else:
                         own_hand = obs["own_hand"]
                     perf_s = torch.cat([obs["priv_s"], own_hand], dim=-1)
+                    # print(f"{perf_s.shape[-1]} {self.training} {own_hand.shape}")
                     assert perf_s.shape[-1] == 783
                 else:
                     perf_s = torch.zeros_like(priv_s)
@@ -270,7 +268,12 @@ class R2D2Agent(torch.jit.ScriptModule):
             action = action.view(bsize, num_player)
             greedy_action = greedy_action.view(bsize, num_player)
             # rand = rand.view(bsize, num_player)
-
+        
+        check = legal_move.detach().clone().gather(1, action.unsqueeze(1)).squeeze(1)
+        a = torch.sum(check, dtype=torch.float)
+        b = torch.tensor(bsize, device=a.device, dtype=torch.float)
+        assert a - b == 0
+        
         # batch
         reply["a"] = action.detach().cpu()
         # batch, num_layer, num_player, dim
@@ -381,7 +384,7 @@ class R2D2Agent(torch.jit.ScriptModule):
         # err: [seq_len, batch]
         if self.ppo:
             _, err, _ = self.td_error(
-            obs, hid, action, reward, terminal, bootstrap, seq_len
+                obs, hid, action, reward, terminal, bootstrap, seq_len
             )
         else:
             err, _, _ = self.td_error(
@@ -430,7 +433,7 @@ class R2D2Agent(torch.jit.ScriptModule):
         # !in the next few lines, "seq_len" dim means "max_seq_len" in the former context
         
         if self.ppo:
-            if self.perfect:
+            if self.perfect and self.training:
                 if obs["own_hand"].dim() == 2:
                     own_hand = obs["own_hand"]
                 elif obs["own_hand"].dim() == 4:
@@ -469,28 +472,40 @@ class R2D2Agent(torch.jit.ScriptModule):
         elif self.ppo:
             # Calculate GAE Advantage
             rewards = reward.detach().clone()  # [seq_len, batch]
-            advs = torch.zeros_like(rewards)  # [seq_len, batch]
-            value_target = torch.zeros_like(rewards)  # [seq_len, batch]
-            nextgae = torch.zeros_like(rewards[0, :])  # [batch]
-
+            # advs = torch.zeros_like(rewards)  # [seq_len, batch]
+            # value_target = torch.zeros_like(rewards)  # [seq_len, batch]
+            gae = torch.zeros_like(rewards)  # [seq_len, batch]
+            nextgae = torch.zeros_like(rewards)  # [seq_len, batch]
             # print("rewards.shape", rewards.shape)
             # print("bootstrap.shape", bootstrap.shape)
             # print("nextgae.shape", nextgae.shape)
             # print("advs.shape", advs.shape)
             # print("value_target.shape", value_target.shape)
+            nextvalues = torch.zeros_like(old_values)
+            nextvalues[:-1, :] = old_values[1:, :]
+            curnonterminal = torch.ones_like(old_values)
+            aranger = torch.arange(0, old_values.shape[0], device=seq_len.device).unsqueeze(1).tile(1, old_values.shape[1])
+            curnonterminal = seq_len.detach().clone().unsqueeze(0).tile((old_values.shape[0],1))
+            curnonterminal = aranger < curnonterminal
             
-            for i in torch.arange(0, rewards.shape[1]):
-                for t in reversed(torch.arange(0, rewards.shape[0])):
-                    if t >= seq_len[i] - 1:
-                        curnonterminal = torch.tensor(0)
-                        nextvalues = torch.tensor(0)
-                    else:
-                        curnonterminal = torch.tensor(1)
-                        nextvalues = old_values[t + 1, i]
+            value_target = rewards + bootstrap * (self.gamma ** self.multi_step) * nextvalues * curnonterminal
+            delta = value_target - old_values
+            for _ in torch.arange(0, old_values.shape[0], device=seq_len.device):
+                nextgae[:-1, :] = gae[1:, :]
+                gae = delta + bootstrap * (self.gamma ** self.multi_step) * self.gae_lamda * curnonterminal * nextgae
+            advs = gae
+            # for i in torch.arange(0, rewards.shape[1]):
+            #     for t in reversed(torch.arange(0, rewards.shape[0])):
+            #         if t >= seq_len[i] - 1:
+            #             curnonterminal = torch.tensor(0)
+            #             nextvalues = torch.tensor(0)
+            #         else:
+            #             curnonterminal = torch.tensor(1)
+            #             nextvalues = old_values[t + 1, i]
                     
-                    value_target[t, i] = rewards[t, i] + bootstrap[t, i] * (self.gamma ** self.multi_step) * nextvalues * curnonterminal
-                    delta = value_target[t, i] - old_values[t, i]
-                    advs[t, i] = nextgae[i] = delta + bootstrap[t, i] * (self.gamma ** self.multi_step) * self.gae_lamda * curnonterminal * nextgae[i]
+            #         value_target[t, i] = rewards[t, i] + bootstrap[t, i] * (self.gamma ** self.multi_step) * nextvalues * curnonterminal
+            #         delta = value_target[t, i] - old_values[t, i]
+            #         advs[t, i] = nextgae[i] = delta + bootstrap[t, i] * (self.gamma ** self.multi_step) * self.gae_lamda * curnonterminal * nextgae[i]
             
             # policy loss
             # [seq_len, batch]

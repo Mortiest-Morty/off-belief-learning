@@ -51,6 +51,7 @@ def flatten(s):
 
 def moving_average(data, period):
     # padding
+    # print(data)
     left_pad = [data[0] for _ in range(period // 2)]
     right_pad = data[-period // 2 + 1 :]
     data = left_pad + data + right_pad

@@ -171,7 +171,6 @@ if __name__ == "__main__":
         args.gae_lamda,
         args.c_1,
         args.c_2,
-        True, # training
         (args.method == "vdn"),
         args.multi_step,
         args.gamma,
@@ -208,7 +207,7 @@ if __name__ == "__main__":
     agent = agent.to(args.train_device)
     optim = torch.optim.Adam(agent.online_net.parameters(), lr=args.lr, eps=args.eps)
     print(agent)
-    eval_agent = agent.clone(args.train_device, {"training": False, "vdn": False, "boltzmann_act": False})
+    eval_agent = agent.clone(args.train_device, {"vdn": False, "boltzmann_act": False})
 
     replay_buffer = rela.RNNPrioritizedReplay(
         args.replay_buffer_size,
