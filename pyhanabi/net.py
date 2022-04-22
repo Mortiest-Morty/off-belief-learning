@@ -486,9 +486,9 @@ class PPOPublicLSTMNet(torch.jit.ScriptModule):
         self.lstm.flatten_parameters()
 
         self.policy = nn.Sequential(
-            nn.Linear(self.hid_dim, self.hid_dim // 8),
+            nn.Linear(self.hid_dim, self.hid_dim),
             nn.ReLU(),
-            nn.Linear(self.hid_dim // 8, self.out_dim),
+            nn.Linear(self.hid_dim, self.out_dim),
         )
         
         self.fc = nn.Linear(self.hid_dim, self.hid_dim)
@@ -504,9 +504,9 @@ class PPOPublicLSTMNet(torch.jit.ScriptModule):
         )
         
         self.value = nn.Sequential(
-            nn.Linear(2 * self.hid_dim, self.hid_dim // 8),
+            nn.Linear(2 * self.hid_dim, self.hid_dim),
             nn.ReLU(),
-            nn.Linear(self.hid_dim // 8, 1),
+            nn.Linear(self.hid_dim, 1),
         )
         
         self.fc_v = nn.Linear(self.hid_dim, 1)

@@ -49,7 +49,7 @@ def parse_args():
     parser.add_argument("--clone_weight", type=float, default=0.0)
     parser.add_argument("--clone_t", type=float, default=0.02)
 
-    parser.add_argument("--seed", type=int, default=10001)
+    parser.add_argument("--seed", type=int, default=2254257)
     parser.add_argument("--gamma", type=float, default=0.999, help="discount factor")
     parser.add_argument(
         "--eta", type=float, default=0.9, help="eta for aggregate priority"
@@ -104,7 +104,7 @@ def parse_args():
     parser.add_argument("--clip_param", type=float, default=0.2)
     parser.add_argument("--gae_lamda", type=float, default=0.95)
     parser.add_argument("--c_1", type=float, default=0.5)
-    parser.add_argument("--c_2", type=float, default=0.0001)
+    parser.add_argument("--c_2", type=float, default=0.00001)
     
     # PTIE setting
     parser.add_argument("--perfect_training", type=int, default=1)
@@ -171,6 +171,7 @@ if __name__ == "__main__":
         args.gae_lamda,
         args.c_1,
         args.c_2,
+        True, # train
         (args.method == "vdn"),
         args.multi_step,
         args.gamma,
@@ -207,7 +208,7 @@ if __name__ == "__main__":
     agent = agent.to(args.train_device)
     optim = torch.optim.Adam(agent.online_net.parameters(), lr=args.lr, eps=args.eps)
     print(agent)
-    eval_agent = agent.clone(args.train_device, {"vdn": False, "boltzmann_act": False})
+    eval_agent = agent.clone(args.train_device, {"train":False, "vdn": False, "boltzmann_act": False})
 
     replay_buffer = rela.RNNPrioritizedReplay(
         args.replay_buffer_size,
