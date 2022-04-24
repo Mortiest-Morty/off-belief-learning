@@ -257,6 +257,8 @@ class R2D2Agent(torch.jit.ScriptModule):
 
         if self.greedy:
             action = greedy_action
+            random_action = torch.zeros_like(greedy_action)
+            rand = torch.zeros_like(greedy_action)
         else:
             # random_action:[batch] sample by chance(actually uniform dist)
             random_action = legal_move.multinomial(1).squeeze(1)
@@ -275,6 +277,14 @@ class R2D2Agent(torch.jit.ScriptModule):
         check = legal_move.detach().clone().gather(1, action.unsqueeze(1)).squeeze(1)
         a = torch.sum(check, dtype=torch.float)
         b = torch.tensor(bsize, device=a.device, dtype=torch.float)
+        if a - b != 0:
+            print("old_probs:", old_probs)
+            print("check:", check)
+            print("legal_move:", legal_move)
+            print("rand:", rand)
+            print("greedy_action:", greedy_action)
+            print("random_action:", random_action)
+            print("action:", action)
         assert a - b == 0
         
         # batch
@@ -447,14 +457,14 @@ class R2D2Agent(torch.jit.ScriptModule):
                 assert perf_s.shape[-1] == 783
             else:
                 perf_s = torch.zeros_like(priv_s)
-            # old_values: [seq_len, batch]
+            # values: [seq_len, batch]
             # greedy_a: [seq_len, batch]
             # probs: [seq_len, batch, num_action]
             # lstm_o: [seq_len, batch, dim]
-            old_values, greedy_a, probs, lstm_o = self.online_net(
+            values, greedy_a, probs, lstm_o = self.online_net(
                 priv_s, publ_s, legal_move, action_, hid, perf_s, self.train_
             )
-            online_qa = torch.zeros_like(old_values)
+            online_qa = torch.zeros_like(greedy_a)
             online_q = torch.zeros_like(probs)
         else:
             # online_qa: [seq_len, batch]
@@ -464,7 +474,7 @@ class R2D2Agent(torch.jit.ScriptModule):
             online_qa, greedy_a, online_q, lstm_o = self.online_net.forward_other(
                 priv_s, publ_s, legal_move, action_, hid
             )
-            old_values = torch.zeros_like(online_qa)
+            values = torch.zeros_like(greedy_a)
             probs = torch.zeros_like(online_q)
 
         loss_dict = dict()
@@ -482,6 +492,8 @@ class R2D2Agent(torch.jit.ScriptModule):
             rewards = reward.detach().clone()  # [seq_len, batch]
             gae = torch.zeros_like(rewards)  # [seq_len, batch]
             nextgae = torch.zeros_like(rewards)  # [seq_len, batch]
+            returns = torch.zeros_like(rewards)
+            nextreturns = torch.zeros_like(rewards)
             # print("rewards.shape", rewards.shape)
             # print("nextgae.shape", nextgae.shape)
             
@@ -497,30 +509,27 @@ class R2D2Agent(torch.jit.ScriptModule):
             delta = value_target - old_values
             # print("value_target:\n", value_target)
             # print("delta:\n", delta)
+            # print("rate:", (self.gamma ** self.multi_step) * self.gae_lamda)
             for _ in torch.arange(0, old_values.shape[0], device=seq_len.device):
                 nextgae[:-self.multi_step, :] = gae[self.multi_step:, :]
                 gae = delta + bootstrap * (self.gamma ** self.multi_step) * self.gae_lamda * nextgae
+                nextreturns[:-self.multi_step, :] = returns[self.multi_step:, :]
+                returns = rewards + bootstrap * (self.gamma ** self.multi_step) * nextreturns
             advs = gae
+            advs = (advs - torch.mean(advs, dim=-1, keepdim=True)) / (torch.std(advs, dim=-1, keepdim=True) + 1e-8)
             
-            # gae2 = delta.detach().clone()
-            # for t in torch.arange(old_values.shape[0] - 2, -1, -1, device=seq_len.device):
-            #     gae2[t, :] = gae2[t, :] + bootstrap[t, :] * (self.gamma ** self.multi_step) * self.gae_lamda * gae2[t + 1, :]
-            # advs2 = gae2
+            # gae = delta.detach().clone()
+            # returns = rewards.detach().clone()
+            # for i in torch.arange(0, old_values.shape[1], device=seq_len.device):
+            #     for t in torch.arange(old_values.shape[0] - 2, -1, -1, device=seq_len.device):
+            #         if bootstrap[t, i] == 0:
+            #             continue
+            #         else:
+            #             gae[t, i] = gae[t, i] + bootstrap[t, i] * (self.gamma ** self.multi_step) * self.gae_lamda * gae[t + 1, i]
+            #             returns[t, i] = returns[t, i] + bootstrap[t, i] * (self.gamma ** self.multi_step) * returns[t + 1, i]
+            # advs = gae
             # print("advs1:\n", advs)
             # print("advs2:\n", advs2)
-            
-            # for i in torch.arange(0, rewards.shape[1]):
-            #     for t in reversed(torch.arange(0, rewards.shape[0])):
-            #         if t >= seq_len[i] - 1:
-            #             curnonterminal = torch.tensor(0)
-            #             nextvalues = torch.tensor(0)
-            #         else:
-            #             curnonterminal = torch.tensor(1)
-            #             nextvalues = old_values[t + 1, i]
-            
-            #         value_target[t, i] = rewards[t, i] + bootstrap[t, i] * (self.gamma ** self.multi_step) * nextvalues * curnonterminal
-            #         delta = value_target[t, i] - old_values[t, i]
-            #         advs[t, i] = nextgae[i] = delta + bootstrap[t, i] * (self.gamma ** self.multi_step) * self.gae_lamda * curnonterminal * nextgae[i]
             
             # policy loss
             # [seq_len, batch]
@@ -532,10 +541,13 @@ class R2D2Agent(torch.jit.ScriptModule):
             
             # value loss
             # [seq_len, batch]
-            err = value_target.detach() - old_values
-            loss_v = nn.functional.smooth_l1_loss(
-                err, torch.zeros_like(err), reduction="none"
-            )
+            value_pred_clipped = old_values + (values - old_values).clamp(-self.clip_param, self.clip_param)
+            err1 = values - returns
+            value_losses = nn.functional.smooth_l1_loss(err1, torch.zeros_like(err1), reduction="none")
+            err2 = value_pred_clipped - returns
+            value_losses_clipped = nn.functional.smooth_l1_loss(err2, torch.zeros_like(err2), reduction="none")
+            loss_v = torch.maximum(value_losses, value_losses_clipped)
+            err = torch.maximum(err1.abs(), err2.abs())
             
             # entropy loss
             # [seq_len, batch]

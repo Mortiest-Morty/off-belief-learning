@@ -70,9 +70,9 @@ def parse_args():
     )
 
     parser.add_argument("--train_device", type=str, default="cuda:0")
-    parser.add_argument("--batchsize", type=int, default=128)
+    parser.add_argument("--batchsize", type=int, default=512)
     parser.add_argument("--num_epoch", type=int, default=1000)
-    parser.add_argument("--epoch_len", type=int, default=500)
+    parser.add_argument("--epoch_len", type=int, default=10)
     parser.add_argument("--num_update_between_sync", type=int, default=500)
 
     # DQN settings
@@ -98,7 +98,7 @@ def parse_args():
     parser.add_argument("--act_base_eps", type=float, default=0.1)
     parser.add_argument("--act_eps_alpha", type=float, default=7)
     parser.add_argument("--act_device", type=str, default="cuda:0")
-    parser.add_argument("--actor_sync_freq", type=int, default=10)
+    parser.add_argument("--actor_sync_freq", type=int, default=1)
     
     # PPO setting
     parser.add_argument("--clip_param", type=float, default=0.2)
