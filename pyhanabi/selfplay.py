@@ -70,6 +70,7 @@ def parse_args():
     )
 
     parser.add_argument("--train_device", type=str, default="cuda:0")
+    parser.add_argument("--eval_device", type=str, default="cuda:0")
     parser.add_argument("--batchsize", type=int, default=512)
     parser.add_argument("--num_epoch", type=int, default=1000)
     parser.add_argument("--epoch_len", type=int, default=10)
@@ -208,7 +209,7 @@ if __name__ == "__main__":
     agent = agent.to(args.train_device)
     optim = torch.optim.Adam(agent.online_net.parameters(), lr=args.lr, eps=args.eps)
     print(agent)
-    eval_agent = agent.clone(args.train_device, {"train":False, "vdn": False, "boltzmann_act": False})
+    eval_agent = agent.clone(args.eval_device, {"train":False, "vdn": False, "boltzmann_act": False})
 
     replay_buffer = rela.RNNPrioritizedReplay(
         args.replay_buffer_size,
@@ -354,6 +355,7 @@ if __name__ == "__main__":
             0,  # explore eps
             args.sad,
             args.hide_action,
+            device=args.eval_device,
         )
 
         force_save_name = None
