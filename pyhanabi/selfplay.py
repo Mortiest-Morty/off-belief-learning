@@ -332,6 +332,7 @@ if __name__ == "__main__":
             replay_buffer.update_priority(priority)
             stopwatch.time("updating priority")
 
+            stat["weight"].feed(weight.mean().detach().item())
             stat["loss"].feed(loss.detach().item())
             stat["grad_norm"].feed(g_norm)
             stat["boltzmann_t"].feed(batch.obs["temperature"][0].mean())

@@ -466,16 +466,20 @@ class PPOPublicLSTMNet(torch.jit.ScriptModule):
         self.priv_net = nn.Sequential(
             nn.Linear(self.priv_in_dim, self.hid_dim),
             nn.ReLU(),
+            nn.LayerNorm(self.hid_dim),
             nn.Linear(self.hid_dim, self.hid_dim),
             nn.ReLU(),
+            nn.LayerNorm(self.hid_dim),
             nn.Linear(self.hid_dim, self.hid_dim),
             nn.ReLU(),
+            nn.LayerNorm(self.hid_dim),
         )
 
-        ff_layers = [nn.Linear(self.publ_in_dim, self.hid_dim), nn.ReLU()]
+        ff_layers = [nn.Linear(self.publ_in_dim, self.hid_dim), nn.ReLU(), nn.LayerNorm(self.hid_dim),]
         for i in range(1, self.num_ff_layer):
             ff_layers.append(nn.Linear(self.hid_dim, self.hid_dim))
             ff_layers.append(nn.ReLU())
+            ff_layers.append(nn.LayerNorm(self.hid_dim))
         self.publ_net = nn.Sequential(*ff_layers)
 
         self.lstm = nn.LSTM(
@@ -488,6 +492,7 @@ class PPOPublicLSTMNet(torch.jit.ScriptModule):
         self.policy = nn.Sequential(
             nn.Linear(self.hid_dim, self.hid_dim),
             nn.ReLU(),
+            nn.LayerNorm(self.hid_dim),
             nn.Linear(self.hid_dim, self.out_dim),
         )
         
@@ -496,16 +501,19 @@ class PPOPublicLSTMNet(torch.jit.ScriptModule):
         self.emb_i = nn.Sequential(
             nn.Linear(self.priv_in_dim, self.hid_dim),
             nn.ReLU(),
+            nn.LayerNorm(self.hid_dim),
         )
         
         self.emb_p = nn.Sequential(
             nn.Linear(self.perfect_in_dim, self.hid_dim),
             nn.ReLU(),
+            nn.LayerNorm(self.hid_dim),
         )
         
         self.value = nn.Sequential(
             nn.Linear(2 * self.hid_dim, self.hid_dim),
             nn.ReLU(),
+            nn.LayerNorm(self.hid_dim),
             nn.Linear(self.hid_dim, 1),
         )
         
