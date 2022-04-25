@@ -489,8 +489,8 @@ class R2D2Agent(torch.jit.ScriptModule):
             loss_entropy = torch.zeros_like(target)
             err = torch.zeros_like(target)
             advs = torch.zeros_like(target)
-            ratios = torch.zeros_like(target)
-            clipped_ratios = torch.zeros_like(target)
+            clipped_ratios1 = torch.zeros_like(target)
+            clipped_ratios2 = torch.zeros_like(target)
         elif self.ppo:
             # Calculate GAE Advantage
             rewards = reward.detach().clone()  # [seq_len, batch]
@@ -540,10 +540,11 @@ class R2D2Agent(torch.jit.ScriptModule):
             probs_a = probs.gather(2, action_.unsqueeze(2)).squeeze(2)
             old_probs_a = old_probs.gather(2, action_.unsqueeze(2)).squeeze(2)
             ratios = torch.exp(torch.log(torch.clamp(probs_a, 1e-10, 1.0)) - torch.log(torch.clamp(old_probs_a, 1e-10, 1.0)))
-            loss_p1 = advs.detach() * torch.clamp(ratios, 0., 3.)
+            clipped_ratios1 = torch.clamp(ratios, 0., 3.)
+            loss_p1 = torch.multiply(advs.detach(), clipped_ratios1)
             loss_p1 = torch.where(ratios==3., torch.zeros_like(loss_p1), loss_p1)
-            clipped_ratios = torch.clamp(ratios, 1 - self.clip_param, 1 + self.clip_param)
-            loss_p2 = torch.multiply(advs.detach(), clipped_ratios)
+            clipped_ratios2 = torch.clamp(ratios, 1 - self.clip_param, 1 + self.clip_param)
+            loss_p2 = torch.multiply(advs.detach(), clipped_ratios2)
             loss_p = torch.minimum(loss_p1, loss_p2)
             
             # value loss
@@ -606,8 +607,8 @@ class R2D2Agent(torch.jit.ScriptModule):
             loss_entropy = torch.zeros_like(target)
             err = torch.zeros_like(target)
             advs = torch.zeros_like(target)
-            ratios = torch.zeros_like(target)
-            clipped_ratios = torch.zeros_like(target)
+            clipped_ratios1 = torch.zeros_like(target)
+            clipped_ratios2 = torch.zeros_like(target)
         # seq_len: [batch]
         mask = torch.arange(0, max_seq_len, device=seq_len.device)
         # mask: [seq_len, 1]  seq_len: [1, batch]
@@ -617,8 +618,8 @@ class R2D2Agent(torch.jit.ScriptModule):
         loss_dict["v"] = loss_v.detach() * mask
         loss_dict["e"] = -loss_entropy.detach() * mask
         loss_dict["adv"] = advs.detach() * mask
-        loss_dict["ratios"] = ratios.detach() * mask
-        loss_dict["ratios_clip"] = clipped_ratios.detach() * mask
+        loss_dict["ratios_clip_1"] = clipped_ratios1.detach() * mask
+        loss_dict["ratios_clip_2"] = clipped_ratios2.detach() * mask
         # e.g. mask [5, 1] seq_len: [1, 3]
         # mask [[0], [1], [2], [3], [4]]
         # seq_len [[2, 3, 1]]
@@ -720,8 +721,8 @@ class R2D2Agent(torch.jit.ScriptModule):
         stat["loss_v"].feed((loss_dict["v"].sum(0) / batch.seq_len).mean().item())  # loss_v: double
         stat["loss_e"].feed((loss_dict["e"].sum(0) / batch.seq_len).mean().item())  # loss_e: double
         stat["adv"].feed((loss_dict["adv"].sum(0) / batch.seq_len).mean().item())  # adv: double
-        stat["ratios"].feed((loss_dict["ratios"].sum(0) / batch.seq_len).mean().item())  # ratios: double
-        stat["ratios_clip"].feed((loss_dict["ratios_clip"].sum(0) / batch.seq_len).mean().item())  # ratios_clip: double
+        stat["ratios_c1"].feed((loss_dict["ratios_clip_1"].sum(0) / batch.seq_len).mean().item())  # ratios_c1: double
+        stat["ratios_c2"].feed((loss_dict["ratios_clip_2"].sum(0) / batch.seq_len).mean().item())  # ratios_c2: double
         # priority: [seq_len, batch]
         priority = err.abs()
         # priority: [batch]
