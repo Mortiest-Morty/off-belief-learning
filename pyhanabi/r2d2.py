@@ -541,7 +541,7 @@ class R2D2Agent(torch.jit.ScriptModule):
             old_probs_a = old_probs.gather(2, action_.unsqueeze(2)).squeeze(2)
             ratios = torch.exp(torch.log(torch.clamp(probs_a, 1e-10, 1.0)) - torch.log(torch.clamp(old_probs_a, 1e-10, 1.0)))
             loss_p1 = advs.detach() * torch.clamp(ratios, 0., 3.)
-            loss_p1 = torch.where(ratios==3., 0., loss_p1)
+            loss_p1 = torch.where(ratios==3., torch.zeros_like(loss_p1), loss_p1)
             clipped_ratios = torch.clamp(ratios, 1 - self.clip_param, 1 + self.clip_param)
             loss_p2 = torch.multiply(advs.detach(), clipped_ratios)
             loss_p = torch.minimum(loss_p1, loss_p2)
