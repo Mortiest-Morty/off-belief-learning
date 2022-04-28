@@ -137,6 +137,8 @@ def plot_rl_vs_bp(
     legend_loc="lower right",
     bbox_to_anchor=None,
     rename=lambda x: x,
+    figsize=(8, 8),
+    save_name="plot.png",
 ):
     log = os.path.join(folder, "train.log")
     rl_scores = []
@@ -172,8 +174,9 @@ def plot_rl_vs_bp(
     if show:
         plt.tight_layout()
         plt.show()
+    plt.savefig(save_name, bbox_inches='tight')
 
 if __name__ == "__main__":
     # render_folder("../exps", "scores", exclude=["belief_iql1"], save_name='bp_train_scores.png')
-    
-    render_folder("../exps", "xent_pred", include=["belief_iql1"], save_name='belief_train_loss.png', legend_loc="upper right")
+    # render_folder("../exps", "xent_pred", include=["belief_iql1"], save_name='belief_train_loss.png', legend_loc="upper right")
+    plot_rl_vs_bp("../exps/rl_search1", save_name='rl_search_eval.png')
