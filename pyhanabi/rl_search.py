@@ -380,7 +380,7 @@ def parse_args():
     parser.add_argument("--debug", type=int, default=0)
     parser.add_argument("--game_seed", type=int, default=1)
     parser.add_argument("--n_step", type=int, default=1, help="n_step return")
-    parser.add_argument("--num_eval_game", type=int, default=5000)  # !E:the number of evaluations for comparing fine-tuned policy against blueprint
+    parser.add_argument("--num_eval_game", type=int, default=5000)  # !E:the number of (rollouts) evaluations for comparing fine-tuned policy against blueprint
     parser.add_argument("--final_only", type=int, default=0)
     parser.add_argument("--sparta", type=int, default=0)
     parser.add_argument("--sparta_num_search", type=int, default=10000)
@@ -419,12 +419,12 @@ def parse_args():
     parser.add_argument("--epoch_len", type=int, default=5000)  # !G:the number of gradient steps
     parser.add_argument("--num_update_between_sync", type=int, default=2500)
 
-    parser.add_argument("--num_hint", type=int, required=True)
-    parser.add_argument("--weight_file", type=str, required=True)
+    parser.add_argument("--num_hint", type=int, default=8)
+    parser.add_argument("--weight_file", type=str, default="")
 
     parser.add_argument("--belief_file", type=str, default="")
     parser.add_argument("--belief_device", type=str, default="cuda:0")
-    parser.add_argument("--num_samples", type=int, default=50000)  # !M:number of rollouts
+    parser.add_argument("--num_samples", type=int, default=50000)  # ! number of samples for myhands
     parser.add_argument("--maintain_exact_belief", type=int, default=1)  # ! if this is true, then maintain the exact belief
     parser.add_argument("--search_exact_belief", type=int, default=1)  # ! if this is true, then use exact belief to search but not rnn belief
 
