@@ -16,6 +16,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 plt.switch_backend("agg")
+plt.style.use('seaborn')
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import common_utils
@@ -44,6 +45,7 @@ def render_folder(
     figsize=(8, 8),
     fig=None,
     ax0=None,
+    save_name="plot.png",
 ):
     logs = parse_log.parse_from_root(
         path, max_epoch, min_epoch, include, exclude, new_log
@@ -71,6 +73,9 @@ def render_folder(
         else:
             x = avg_xs[k][0][: len(mean)]
         ax0.plot(x, mean, label=rename(k))
+        if y_key == "scores":
+            upper_bound = np.ones_like(x) * 25
+            ax0.plot(upper_bound, 'r--')
 
         lb = [m - sem for m, sem in zip(mean, sem)]
         ub = [m + sem for m, sem in zip(mean, sem)]
@@ -82,8 +87,7 @@ def render_folder(
     if show:
         plt.tight_layout()
         plt.show()
-    plt.savefig('iql1.png', bbox_inches='tight')
-
+    plt.savefig(save_name, bbox_inches='tight')
 
 def render_cross_play_matrix(logfile, figsize=(15, 15)):
     log = open(logfile, "r").readlines()
@@ -169,6 +173,7 @@ def plot_rl_vs_bp(
         plt.tight_layout()
         plt.show()
 
-
 if __name__ == "__main__":
-    render_folder("../exps", "scores", include=["iql1"], exclude=["ppo1"])
+    # render_folder("../exps", "scores", exclude=["belief_iql1"], save_name='bp_train_scores.png')
+    
+    render_folder("../exps", "xent_pred", include=["belief_iql1"], save_name='belief_train_loss.png', legend_loc="upper right")
