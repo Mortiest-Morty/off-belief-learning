@@ -154,6 +154,7 @@ def train(game, search_actor, replay_buffer, args, eval_seed):
         sim_hands = [[[]]]
         use_sim_hands = False
     else:
+        # remove the samples that is illegal
         sim_hands = search_actor.actor.sample_hands(game.state(), args.num_samples)
         use_sim_hands = True
         if len(sim_hands[0]) < search_actor.num_samples * search_actor.acceptance_rate:
@@ -375,7 +376,7 @@ def parse_args():
     parser.add_argument("--save_dir", type=str, default="exps/rl_search1")
 
     parser.add_argument("--public_belief", type=int, default=0)
-    parser.add_argument("--threshold", type=float, default=0.05)
+    parser.add_argument("--threshold", type=float, default=0.05)  # !epsilon:the deviation threshold
     parser.add_argument("--debug", type=int, default=0)
     parser.add_argument("--game_seed", type=int, default=1)
     parser.add_argument("--n_step", type=int, default=1, help="n_step return")
@@ -383,7 +384,7 @@ def parse_args():
     parser.add_argument("--final_only", type=int, default=0)
     parser.add_argument("--sparta", type=int, default=0)
     parser.add_argument("--sparta_num_search", type=int, default=10000)
-    parser.add_argument("--sparta_threshold", type=float, default=0.05)  # !epsilon:the deviation threshold
+    parser.add_argument("--sparta_threshold", type=float, default=0.05)
 
     parser.add_argument("--seed", type=int, default=10001)
     parser.add_argument("--num_rl_step", type=int, default=1)  # !H:horizon
