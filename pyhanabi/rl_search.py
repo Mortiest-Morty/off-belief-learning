@@ -425,8 +425,8 @@ def parse_args():
     parser.add_argument("--belief_file", type=str, default="")
     parser.add_argument("--belief_device", type=str, default="cuda:0")
     parser.add_argument("--num_samples", type=int, default=50000)  # !M:number of rollouts
-    parser.add_argument("--maintain_exact_belief", type=int, default=1)
-    parser.add_argument("--search_exact_belief", type=int, default=1)
+    parser.add_argument("--maintain_exact_belief", type=int, default=1)  # ! if this is true, then maintain the exact belief
+    parser.add_argument("--search_exact_belief", type=int, default=1)  # ! if this is true, then use exact belief to search but not rnn belief
 
     args = parser.parse_args()
     if args.debug:

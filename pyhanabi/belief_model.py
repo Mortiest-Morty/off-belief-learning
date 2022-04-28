@@ -199,7 +199,7 @@ class ARBeliefModel(torch.jit.ScriptModule):
     def observe(self, obs: Dict[str, torch.Tensor]) -> Dict[str, torch.Tensor]:
         """at some time-step, update the hidden layers (h0,c0) to
         the next time-step (h0',c0') by a player's priv_s
-        # ?maybe this is used to fine-tuning the belief model
+        # ! this is used to fine-tuning the belief model
 
         Args:
             obs (Dict[str, torch.Tensor]): _description_
