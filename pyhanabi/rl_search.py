@@ -98,16 +98,14 @@ class SearchWrapper:
                 belief_device,
                 hand_size=5,
                 num_sample=num_samples,
-                fc_only=False,
-                mode="priv",  # ?
+                fc_only=False
             )
             self.blueprint_belief = belief_model.ARBeliefModel.load(
                 belief_file,
                 belief_device,
                 hand_size=5,
                 num_sample=num_samples,
-                fc_only=False,
-                mode="priv",
+                fc_only=False
             )
             self.belief_runner = rela.BatchRunner(
                 self.belief_model, belief_device, rollout_bsize, ["observe", "sample"]
