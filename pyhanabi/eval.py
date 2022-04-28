@@ -30,7 +30,7 @@ def evaluate(
     sad,
     hide_action,
     *,
-    num_thread=10,
+    num_thread=1,
     max_len=80,
     device="cuda:0",
 ):
