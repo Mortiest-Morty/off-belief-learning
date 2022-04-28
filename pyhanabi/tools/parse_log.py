@@ -62,7 +62,7 @@ def parse_new_log(filename, max_epoch):
     loss = []
 
     def get_val_from_line(l):
-        a = float(l.split()[4][:-1])
+        a = float(l.split()[3][:-1])
         return a
 
     for i, l in enumerate(lines):
