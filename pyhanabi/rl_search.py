@@ -407,7 +407,7 @@ def parse_args():
     parser.add_argument("--rollout_batchsize", type=int, default=8000)  # !B:rollout batch size
 
     parser.add_argument("--num_thread", type=int, default=1, help="#thread_loop")
-    parser.add_argument("--num_game_per_thread", type=int, default=20)
+    parser.add_argument("--num_game_per_thread", type=int, default=20)  # TODO:YOU MUSTN'T PLAY TOO MUCH GAMES PER THREAD!
 
     parser.add_argument("--aux", type=float, default=0.25)
 
