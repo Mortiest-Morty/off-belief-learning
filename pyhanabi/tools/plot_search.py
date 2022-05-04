@@ -6,9 +6,14 @@ import matplotlib.pyplot as plt
 plt.rcParams['axes.unicode_minus'] = False  # 用来正常显示负号
 import numpy as np
 
-
-data = [23.85, 24.05, 24.15]
-labels = ["DFT", "SPARTA", "RLSearch"]
+# data = [23.85, 24.05, 24.15]
+# labels = ["DFT", "SPARTA", "RLSearch"]
+# err = [0.043, 0.043, 0.043]
+# data = [23.85, 23.40]
+# labels = ["DFT", "DFT-rollout"]
+# err = [0.043, 0.043]
+data = [23.85, 23.97, 23.32]
+labels = ["DFT", "DFT-exact", "DFT-nonbft"]
 err = [0.043, 0.043, 0.043]
 
 color = []
@@ -17,14 +22,21 @@ for label in labels:
         color.append("blue")
     elif label == "SPARTA":
         color.append("orange")
+    elif label == "DFT-rollout":
+        color.append("red")
+    elif label == "DFT-exact":
+        color.append("pink")
+    elif label == "DFT-nonbft":
+        color.append("brown")
     else:
         color.append("green")
 
 err_prams = dict(ecolor="gray")
-bar1 = plt.bar(np.arange(len(data)), data, width=0.5, yerr=err, error_kw=err_prams, color=color, alpha=0.6)
-plt.axhline(y=0, color="black")
+keys = np.arange(len(data))
+bar1 = plt.bar(keys, data, width=0.5, yerr=err, error_kw=err_prams, color=color, alpha=0.6)
+# plt.axhline(y=0, color="black")
 plt.ylabel("average scores")
-plt.xticks(ticks=np.arange(len(data)), labels=labels)
+plt.xticks(ticks=keys, labels=labels, fontsize=10)
 
 
 def autolabel(rects):
@@ -43,6 +55,5 @@ def autolabel(rects):
 autolabel(bar1)
 #plt.xticks(rotation=-15)
 plt.ylim((20, 25))
-plt.xticks(fontsize=10)
 #plt.show()
-plt.savefig("search_result.png", dpi=500)
+plt.savefig("search_result3.png", dpi=500)
