@@ -26,3 +26,13 @@ models_bkup.zip
 models_bkup/
 
 *.log
+
+hanabi-learning-environment/CMakeFiles
+hanabi-learning-environment/hanabi_lib
+hanabi-learning-environment/cmake_install.cmake
+hanabi-learning-environment/CMakeCache.txt
+hanabi-learning-environment/game_example
+hanabi-learning-environment/libpyhanabi.so
+hanabi-learning-environment/Makefile
+
+*.png

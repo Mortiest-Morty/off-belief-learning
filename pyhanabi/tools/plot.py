@@ -42,7 +42,7 @@ def render_folder(
     y_min=None,
     y_max=None,
     rename=lambda x: x,
-    figsize=(8, 8),
+    figsize=(14, 8),
     fig=None,
     ax0=None,
     save_name="plot.png",
@@ -72,18 +72,28 @@ def render_folder(
             x = list(range(len(mean)))
         else:
             x = avg_xs[k][0][: len(mean)]
-        ax0.plot(x, mean, label=rename(k))
+        ax0.plot(x, mean, 'orange',label=rename(k), linewidth=3.0)
         if y_key == "scores":
             upper_bound = np.ones_like(x) * 25
-            ax0.plot(upper_bound, 'r--')
+            ax0.plot(upper_bound, 'r--', linewidth=2.0)
+            lb = [m - sem for m, sem in zip(mean, sem)]
+            ub = [m + sem for m, sem in zip(mean, sem)]
+            ax0.fill_between(x, lb, ub, alpha=0.25)
+        elif y_key == "xent_pred":
+            y_ = [m for m, _ in zip(mean, sem)]
+            ax0.fill_between(x, y_, facecolor='orange', alpha=0.5)
 
-        lb = [m - sem for m, sem in zip(mean, sem)]
-        ub = [m + sem for m, sem in zip(mean, sem)]
-        ax0.fill_between(x, lb, ub, alpha=0.25)
-
-    ax0.legend(loc=legend_loc, prop={"size": 15}, bbox_to_anchor=bbox_to_anchor)
+    ax0.legend(loc=legend_loc, prop={"size": 20}, bbox_to_anchor=bbox_to_anchor)
     ax0.set_xlim(left=x_min, right=x_max)
     ax0.set_ylim(y_min, y_max)
+    plt.xticks(size = 18)
+    plt.yticks(size = 18)
+    if y_key == "scores":
+        plt.xlabel('epoch step',fontdict={'size': 20})
+        plt.ylabel('average scores',fontdict={'size': 20})
+    elif y_key == "xent_pred":
+        plt.xlabel('epoch step',fontdict={'size': 20})
+        plt.ylabel('cross entropy loss',fontdict={'size': 20})
     if show:
         plt.tight_layout()
         plt.show()
@@ -177,6 +187,6 @@ def plot_rl_vs_bp(
     plt.savefig(save_name, bbox_inches='tight')
 
 if __name__ == "__main__":
-    # render_folder("../exps", "scores", exclude=["belief_iql1"], save_name='bp_train_scores.png')
-    # render_folder("../exps", "xent_pred", include=["belief_iql1"], save_name='belief_train_loss.png', legend_loc="upper right")
-    plot_rl_vs_bp("../exps/rl_search1", save_name='rl_search_eval.png')
+    # render_folder("../exps", "scores", exclude=["Belief Model"], save_name='bp_train_scores.png')
+    render_folder("../exps", "xent_pred", include=["Belief Model"], save_name='belief_train_loss.png', legend_loc="upper right", y_min=1.3)
+    # plot_rl_vs_bp("../exps/rl_search1", save_name='rl_search_eval.png')

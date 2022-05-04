@@ -183,15 +183,19 @@ def average_across_seed(logs):
 
     for k in new_logs:
         vals = new_logs[k]
+        # print(vals)
         means = []
         sems = []
         max_len = np.max([len(v) for v in vals])
+        # print(max_len)
         for i in range(max_len):
             nums = []
             for v in vals:
+                # print(len(v))
                 if len(v) > i:
-                    nums.append(v[i])
-            means.append(np.mean(nums))
+                    for j in range(i+1):
+                        nums.append(v[j])
+            means.append(np.mean([nums[-1]]))
             if len(nums) == 1:
                 sems.append(0)
             else:
